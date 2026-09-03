@@ -11,7 +11,11 @@ interface RenameState {
   screenY: number;
 }
 
-export const ZooCanvas: React.FC = () => {
+export interface ZooCanvasProps {
+  onSceneReady?: (scene: ZooSceneInstance) => void;
+}
+
+export const ZooCanvas: React.FC<ZooCanvasProps> = ({ onSceneReady }) => {
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const sceneRef   = useRef<ZooSceneInstance | null>(null);
 
@@ -30,8 +34,9 @@ export const ZooCanvas: React.FC = () => {
     if (!canvas) return;
     const scene = createZooScene(canvas);
     sceneRef.current = scene;
+    onSceneReady?.(scene);
     return () => { scene.dispose(); sceneRef.current = null; };
-  }, []);
+  }, [onSceneReady]);
 
   // ── Focus rename input ────────────────────────────────────────────────────
   useEffect(() => {

@@ -10,14 +10,14 @@ const MAX_RADIUS  = 95;
 const ORBIT_SPEED = 0.0040;
 const ZOOM_SPEED  = 0.10;
 const LERP_CAM    = 0.095;            // camera smoothing
-const LERP_KEY    = 0.12;            // keyboard pan smoothing
+const LERP_KEY    = 0.16;             // keyboard pan smoothing
 
 // How far the look-at point can stray from zoo centre
 const TARGET_BOUND_XZ = 52;
 const TARGET_BOUND_Y  = 16;
 
 // Keyboard pan speed (world units per second at zoom 1.0)
-const KEY_PAN_SPEED   = 18;
+const KEY_PAN_SPEED   = 38;
 
 interface State {
   // Pointer
@@ -35,10 +35,16 @@ interface State {
   keys: Set<string>;
 }
 
+export interface ZooControls {
+  update: () => void;
+  dispose: () => void;
+  panTo: (target: THREE.Vector3, radius?: number) => void;
+}
+
 export function createControls(
   camera: THREE.PerspectiveCamera,
   dom: HTMLElement,
-): { update: () => void; dispose: () => void } {
+): ZooControls {
 
   const state: State = {
     isDown: false,
@@ -247,5 +253,11 @@ export function createControls(
     window.removeEventListener('keyup',    onKeyUp);
   }
 
-  return { update, dispose };
+  function panTo(target: THREE.Vector3, radius = 22): void {
+    state.lookT.copy(target);
+    clampTarget(state.lookT);
+    state.sphT.radius = THREE.MathUtils.clamp(radius, MIN_RADIUS, MAX_RADIUS);
+  }
+
+  return { update, dispose, panTo };
 }

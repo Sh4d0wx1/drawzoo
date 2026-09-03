@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { buildHabitats } from './habitats';
 import { buildScenery } from './scenery';
-import { buildAnimals } from './animals';
+import { buildAnimals, spawnAnimal } from './animals';
 import { animateAnimals } from './animator';
 import { createControls } from './controls';
-import { buildNameLabels, updateNameLabels, pickLabel, refreshNameLabel } from './nameLabels';
+import { buildNameLabels, updateNameLabels, pickLabel, refreshNameLabel, createNameLabelSprite } from './nameLabels';
 import type { AnimalData } from './types';
+import { supabase } from '../lib/supabaseClient';
+import type { AnimalRecord } from '../lib/supabaseClient';
 
 export interface ZooSceneInstance {
   renderer: THREE.WebGLRenderer;
@@ -17,6 +19,8 @@ export interface ZooSceneInstance {
   pickLabel: (x: number, y: number) => number;
   renameAnimal: (index: number, newName: string) => void;
   highlightAnimal: (animal: AnimalData | null) => void;
+  addAnimal: (species: string, name: string, color?: string, dbId?: string, shouldFocus?: boolean) => AnimalData;
+  panCameraTo: (target: THREE.Vector3, radius?: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,8 +89,8 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
   camera.lookAt(0, 0, 0);
 
   // ── Lighting ──────────────────────────────────────────────────────────────
-  // Hemisphere — warm sky / cool ground
-  const hemi = new THREE.HemisphereLight(0xb0d8f8, 0x8aaa60, 0.55);
+  // Hemisphere — #ffffff sky / #556b2f olive-green ground fill (prevents underbelly clipping)
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x556b2f, 0.60);
   scene.add(hemi);
 
   // Main sun — golden-hour angle, slightly south-west
@@ -111,12 +115,12 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
   scene.add(fill);
 
   // Subtle warm bounce from ground level
-  const bounce = new THREE.DirectionalLight(0xffeecc, 0.18);
+  const bounce = new THREE.DirectionalLight(0xffeecc, 0.22);
   bounce.position.set(0, -10, 0);
   scene.add(bounce);
 
   // Ambient for deep-shadow fill
-  scene.add(new THREE.AmbientLight(0xfff0e0, 0.30));
+  scene.add(new THREE.AmbientLight(0xfff5ea, 0.35));
 
   // ── Sky ───────────────────────────────────────────────────────────────────
   buildSky(scene);
@@ -158,9 +162,18 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
     const ndcY  = -((clientY - rect.top)  / rect.height) * 2 + 1;
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
     const meshes: THREE.Object3D[] = [];
-    animals.forEach(a => a.group.traverse(o => { if (o instanceof THREE.Mesh) meshes.push(o); }));
+    animals.forEach(a => a.group.traverse(o => {
+      if (o instanceof THREE.Mesh) {
+        meshes.push(o);
+        if (!meshToAnimal.has(o.uuid)) {
+          meshToAnimal.set(o.uuid, (o.userData.animal as AnimalData) ?? a);
+        }
+      }
+    }));
     const hits = raycaster.intersectObjects(meshes, false);
-    return hits.length > 0 ? (meshToAnimal.get(hits[0].object.uuid) ?? null) : null;
+    if (hits.length === 0) return null;
+    const hitObj = hits[0].object;
+    return (hitObj.userData.animal as AnimalData) ?? meshToAnimal.get(hitObj.uuid) ?? null;
   }
 
   // ── Clock ─────────────────────────────────────────────────────────────────
@@ -174,6 +187,11 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
     const elapsed = clock.getElapsedTime();
     const delta   = elapsed - prevTime;
     prevTime       = elapsed;
+
+    // Update animation mixers for models with embedded skeletal tracks
+    animals.forEach(a => {
+      if (a.mixer) a.mixer.update(delta);
+    });
 
     // Animals + labels
     animateAnimals(animals, elapsed, delta);
@@ -239,9 +257,52 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
   }
   tick();
 
+  // ── Sync with Supabase Database on Startup ───────────────────────────────
+  async function syncAnimalsFromDB(): Promise<void> {
+    try {
+      const { data, error } = await supabase
+        .from('animals')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.warn('Could not fetch animals from Supabase:', error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        data.forEach((rec: AnimalRecord) => {
+          if (!animals.some(a => a.group.userData?.dbId === rec.id)) {
+            addAnimal(rec.species, rec.name, rec.color, rec.id, false);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to sync DB animals:', err);
+    }
+  }
+  syncAnimalsFromDB();
+
+  // ── Real-time Channel for New Animal Inserts ──────────────────────────────
+  const animalsChannel = supabase
+    .channel('public:animals')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'animals' },
+      (payload) => {
+        const rec = payload.new as AnimalRecord;
+        if (!rec) return;
+        if (!animals.some(a => a.group.userData?.dbId === rec.id)) {
+          addAnimal(rec.species, rec.name, rec.color, rec.id, false);
+        }
+      }
+    )
+    .subscribe();
+
   // ── Dispose ───────────────────────────────────────────────────────────────
   function dispose(): void {
     cancelAnimationFrame(animId);
+    supabase.removeChannel(animalsChannel);
     controls.dispose();
     nameSprites.forEach(s => {
       (s.material as THREE.SpriteMaterial).map?.dispose();
@@ -264,11 +325,64 @@ export function createZooScene(canvas: HTMLCanvasElement): ZooSceneInstance {
     refreshNameLabel(nameSprites[index], newName);
   }
 
+  function addAnimal(
+    species: string,
+    name: string,
+    color?: string,
+    dbId?: string,
+    shouldFocus = true,
+  ): AnimalData {
+    if (dbId) {
+      const existing = animals.find(a => a.group.userData?.dbId === dbId);
+      if (existing) {
+        if (shouldFocus) {
+          controls.panTo(existing.position, 18);
+          highlightAnimal(existing);
+        }
+        return existing;
+      }
+    }
+
+    const animal = spawnAnimal(species, name, color);
+    if (dbId) {
+      animal.group.userData.dbId = dbId;
+    }
+    scene.add(animal.group);
+    animals.push(animal);
+
+    const sprite = createNameLabelSprite(animal);
+    scene.add(sprite);
+    nameSprites.push(sprite);
+
+    // Register all child meshes for raycast picking
+    animal.group.traverse(o => {
+      if (o instanceof THREE.Mesh) {
+        meshToAnimal.set(o.uuid, animal);
+        o.userData.animal = animal;
+      }
+    });
+
+    if (shouldFocus) {
+      // Pan camera to view new animal
+      controls.panTo(animal.position, 18);
+      // Highlight the newly created animal
+      highlightAnimal(animal);
+    }
+
+    return animal;
+  }
+
+  function panCameraTo(target: THREE.Vector3, radius = 22): void {
+    controls.panTo(target, radius);
+  }
+
   return {
     renderer, camera, animals, raycaster,
     dispose, pickAnimal,
     pickLabel: pickLabelAt,
     renameAnimal,
     highlightAnimal,
+    addAnimal,
+    panCameraTo,
   };
 }

@@ -6,36 +6,36 @@ export const HABITATS: Habitat[] = [
     name: 'Savanna',
     center: new THREE.Vector3(-28, 0, -28),
     radius: 22,
-    groundColor: 0xd4a55a,
-    accentColor: 0xb8860b,
+    groundColor: 0xd8b878, // Warm, smooth sandy-grass tone (#d8b878)
+    accentColor: 0xcbb074,
   },
   {
     name: 'Jungle',
     center: new THREE.Vector3(28, 0, -28),
     radius: 22,
-    groundColor: 0x3a7d44,
-    accentColor: 0x2d5a27,
+    groundColor: 0x49743a, // Rich forest floor green/moss tone (#49743a)
+    accentColor: 0x3d6430,
   },
   {
     name: 'Reptile Zone',
     center: new THREE.Vector3(28, 0, 28),
     radius: 18,
-    groundColor: 0x8b7355,
-    accentColor: 0x6b5a3e,
+    groundColor: 0x9b7653, // Warm earthy clay/dry loam (#9b7653)
+    accentColor: 0x866342,
   },
   {
     name: 'Aviary',
     center: new THREE.Vector3(-28, 0, 28),
     radius: 18,
-    groundColor: 0x90c080,
-    accentColor: 0x5a9040,
+    groundColor: 0x7ba652, // Soft natural pasture green (#7ba652)
+    accentColor: 0x699042,
   },
   {
     name: 'Aquatic Zone',
     center: new THREE.Vector3(0, 0, 0),
     radius: 16,
-    groundColor: 0x1a6b9a,
-    accentColor: 0x0d4f73,
+    groundColor: 0x0f3b56,
+    accentColor: 0x0d324d,
   },
 ];
 
@@ -64,39 +64,103 @@ function smoothNoise(x: number, z: number): number {
 export function buildHabitats(scene: THREE.Scene): void {
   buildMainGround(scene);
   HABITATS.forEach((h, i) => {
-    buildHabitatPad(scene, h);
-    buildEdgeBerm(scene, h);
-    buildEntranceSign(scene, h, i);
+    if (h.name === 'Aquatic Zone') {
+      buildAquaticBasin(scene, h);
+    } else {
+      buildHabitatPad(scene, h);
+      buildEdgeBerm(scene, h);
+      buildEntranceSign(scene, h, i);
+    }
   });
 }
 
 // ---------------------------------------------------------------------------
-// Main ground — subdivided so it can receive varied vertex colours / shadows
+// Aquatic Basin — sunken cylinder tank with dark blue walls and floor disc
+// ---------------------------------------------------------------------------
+function buildAquaticBasin(scene: THREE.Scene, h: Habitat): void {
+  const segs = 64;
+  const radius = 15.5;
+  const depth = 2.4;
+
+  // 1. Sunken Basin Cylinder Wall (open top & bottom, pushed downwards Y < 0)
+  const wallGeo = new THREE.CylinderGeometry(radius, radius, depth, segs, 1, true);
+  const wallMat = new THREE.MeshLambertMaterial({
+    color: 0x0d324d, // Dark blue interior walls (#0d324d)
+    side: THREE.BackSide,
+  });
+  const wallMesh = new THREE.Mesh(wallGeo, wallMat);
+  wallMesh.position.set(h.center.x, -depth / 2, h.center.z);
+  wallMesh.receiveShadow = true;
+  scene.add(wallMesh);
+
+  // 2. Circular floor disc at bottom (Y = -depth) colored dark navy/teal
+  const floorGeo = new THREE.CircleGeometry(radius, segs);
+  floorGeo.rotateX(-Math.PI / 2);
+  const floorMat = new THREE.MeshLambertMaterial({
+    color: 0x081f33, // Dark navy/teal bottom floor
+    side: THREE.FrontSide,
+  });
+  const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+  floorMesh.position.set(h.center.x, -depth, h.center.z);
+  floorMesh.receiveShadow = true;
+  scene.add(floorMesh);
+
+  // 3. Black / Dark boundary ring around the pool rim
+  const rimGeo = new THREE.TorusGeometry(radius, 0.35, 12, segs);
+  const rimMat = new THREE.MeshLambertMaterial({
+    color: 0x061420, // Black / dark boundary ring
+  });
+  const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+  rimMesh.rotation.x = Math.PI / 2;
+  rimMesh.position.set(h.center.x, 0.05, h.center.z);
+  rimMesh.receiveShadow = true;
+  rimMesh.castShadow = true;
+  scene.add(rimMesh);
+}
+
+// ---------------------------------------------------------------------------
+// Main ground — true hole cutout at center (0,0) so terrain never clips through the pond
 // ---------------------------------------------------------------------------
 function buildMainGround(scene: THREE.Scene): void {
-  const segs = 40;
   const size = 130;
-  const geo  = new THREE.PlaneGeometry(size, size, segs, segs);
-  geo.rotateX(-Math.PI / 2);
+  const half = size / 2;
+  const poolR = 15.5;
 
-  // Subtle height variation
-  const pos = geo.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const y = (smoothNoise(x * 0.12, z * 0.12) - 0.5) * 0.35
-            + (smoothNoise(x * 0.35, z * 0.35) - 0.5) * 0.12;
-    pos.setY(i, y);
-  }
-  geo.computeVertexNormals();
+  const groundShape = new THREE.Shape();
+  groundShape.moveTo(-half, -half);
+  groundShape.lineTo(half, -half);
+  groundShape.lineTo(half, half);
+  groundShape.lineTo(-half, half);
+  groundShape.closePath();
+
+  // Cut true circular hole at center
+  const holePath = new THREE.Path();
+  holePath.absarc(0, 0, poolR, 0, Math.PI * 2, true);
+  groundShape.holes.push(holePath);
+
+  const geo = new THREE.ShapeGeometry(groundShape, 48);
+  geo.rotateX(-Math.PI / 2);
 
   const mat = new THREE.MeshLambertMaterial({ color: 0x7aaa50 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   scene.add(mesh);
 
-  // Outer border — darker green beyond fence
-  const borderGeo = new THREE.PlaneGeometry(200, 200);
+  // Outer border with matching hole
+  const borderSize = 200;
+  const bHalf = borderSize / 2;
+  const borderShape = new THREE.Shape();
+  borderShape.moveTo(-bHalf, -bHalf);
+  borderShape.lineTo(bHalf, -bHalf);
+  borderShape.lineTo(bHalf, bHalf);
+  borderShape.lineTo(-bHalf, bHalf);
+  borderShape.closePath();
+
+  const borderHole = new THREE.Path();
+  borderHole.absarc(0, 0, poolR, 0, Math.PI * 2, true);
+  borderShape.holes.push(borderHole);
+
+  const borderGeo = new THREE.ShapeGeometry(borderShape, 48);
   borderGeo.rotateX(-Math.PI / 2);
   const borderMat = new THREE.MeshLambertMaterial({ color: 0x4a7a30 });
   const border = new THREE.Mesh(borderGeo, borderMat);
@@ -106,20 +170,20 @@ function buildMainGround(scene: THREE.Scene): void {
 }
 
 // ---------------------------------------------------------------------------
-// Habitat pad — circular, subdivided for gentle undulation
+// Habitat pad — clean, unified circular biome floor with subtle organic boundary
 // ---------------------------------------------------------------------------
 function buildHabitatPad(scene: THREE.Scene, h: Habitat): void {
-  const segs = 52;
+  const segs = 56;
   const geo  = new THREE.CircleGeometry(h.radius, segs);
   geo.rotateX(-Math.PI / 2);
 
-  // Very subtle vertex noise so edge isn't a perfect circle
+  // Very subtle vertex noise for soft natural edge
   const pos = geo.attributes.position as THREE.BufferAttribute;
-  for (let i = 1; i < pos.count; i++) {  // skip centre vertex (0)
+  for (let i = 1; i < pos.count; i++) {
     const x   = pos.getX(i) + h.center.x;
     const z   = pos.getZ(i) + h.center.z;
     const n   = smoothNoise(x * 0.25, z * 0.25);
-    const bump = (n - 0.5) * 0.22;
+    const bump = (n - 0.5) * 0.18;
     pos.setY(i, 0.02 + bump);
   }
   geo.computeVertexNormals();
@@ -129,16 +193,6 @@ function buildHabitatPad(scene: THREE.Scene, h: Habitat): void {
   mesh.position.set(h.center.x, 0.01, h.center.z);
   mesh.receiveShadow = true;
   scene.add(mesh);
-
-  // Inner accent ring (raised slightly)
-  const ringGeo = new THREE.RingGeometry(h.radius - 2.5, h.radius, segs);
-  ringGeo.rotateX(-Math.PI / 2);
-  const ringMat = new THREE.MeshLambertMaterial({
-    color: h.accentColor, side: THREE.DoubleSide,
-  });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
-  ring.position.set(h.center.x, 0.04, h.center.z);
-  scene.add(ring);
 }
 
 // ---------------------------------------------------------------------------

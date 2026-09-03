@@ -21,12 +21,10 @@ const M = {
   fenceRail:  new THREE.MeshLambertMaterial({ color: 0xb89040 }),
   pathMat:    new THREE.MeshLambertMaterial({ color: 0xd2b48c }),
   pebbleMat:  new THREE.MeshLambertMaterial({ color: 0xb8a890 }),
-  water:      new THREE.MeshLambertMaterial({ color: 0x1a8fc1, transparent: true, opacity: 0.84 }),
-  waterSheen: new THREE.MeshLambertMaterial({ color: 0x60c8f0, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+  water:      new THREE.MeshStandardMaterial({ color: 0x00a8cc, transparent: true, opacity: 0.6, roughness: 0.1, depthWrite: false, side: THREE.DoubleSide }),
+  waterSheen: new THREE.MeshBasicMaterial({ color: 0x80e0ff, transparent: true, opacity: 0.20, depthWrite: false, side: THREE.DoubleSide }),
   rock:       new THREE.MeshLambertMaterial({ color: 0x888888 }),
   rockDark:   new THREE.MeshLambertMaterial({ color: 0x666666 }),
-  lampMetal:  new THREE.MeshLambertMaterial({ color: 0x444455 }),
-  lampGlow:   new THREE.MeshLambertMaterial({ color: 0xfffacc, emissive: 0xffee88, emissiveIntensity: 1.0 }),
   bush:       new THREE.MeshLambertMaterial({ color: 0x2a6e28 }),
   bushLight:  new THREE.MeshLambertMaterial({ color: 0x3a8e38 }),
   flower1:    new THREE.MeshLambertMaterial({ color: 0xff6699 }),
@@ -37,8 +35,6 @@ const M = {
   cloudMat:   new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.88 }),
   butterfly1: new THREE.MeshLambertMaterial({ color: 0xff88cc, side: THREE.DoubleSide }),
   butterfly2: new THREE.MeshLambertMaterial({ color: 0x88ddff, side: THREE.DoubleSide }),
-  lilyMat:    new THREE.MeshLambertMaterial({ color: 0x44bb44 }),
-  lilyFlower: new THREE.MeshLambertMaterial({ color: 0xffaacc }),
 };
 
 // ---------------------------------------------------------------------------
@@ -50,7 +46,6 @@ export function buildScenery(scene: THREE.Scene): THREE.Object3D[] {
   buildWaterPond(scene, HABITATS[4]);
   buildHabitatScenery(scene);
   buildGlobalGrass(scene);
-  buildPathLamps(scene);
   buildClouds(scene);
   const butterflies = buildButterflies(scene);
   return butterflies;
@@ -61,6 +56,7 @@ export function buildScenery(scene: THREE.Scene): THREE.Object3D[] {
 // ============================================================================
 function buildHabitatFences(scene: THREE.Scene): void {
   HABITATS.forEach(h => {
+    if (h.name === 'Aquatic Zone') return; // Keep aquatic basin open and clean
     const segs = 36;
     const r    = h.radius + 0.3;
     // Posts
@@ -91,9 +87,6 @@ function buildHabitatFences(scene: THREE.Scene): void {
       const railGeo = new THREE.TubeGeometry(curve, segs * 2, 0.035, 4, true);
       scene.add(new THREE.Mesh(railGeo, M.fenceRail));
     }
-
-    // Gate opening — small gap at the south-facing entrance
-    // (just removes two posts by skipping — the gap is visual only)
   });
 
   // Outer perimeter fence
@@ -138,188 +131,207 @@ function buildFenceSegment(
 }
 
 // ============================================================================
-// PATHS — stone/gravel paths connecting habitats + central hub
+// PATHS — circular collar around pond and radial spokes to habitat gates
 // ============================================================================
 function buildPaths(scene: THREE.Scene): void {
-  // Central crossroads
-  addPathCircle(scene, 0, 0, 5.5);
+  // 1. Central Pond Promenade Collar Ring (strictly outside black rim: r in [16.5, 19.5])
+  const segs = 64;
+  const ringGeo = new THREE.RingGeometry(16.5, 19.5, segs);
+  ringGeo.rotateX(-Math.PI / 2);
+  const ringMesh = new THREE.Mesh(ringGeo, M.pathMat);
+  ringMesh.position.set(0, 0.025, 0);
+  ringMesh.receiveShadow = true;
+  scene.add(ringMesh);
 
-  // Four spokes to habitat entrances
-  const hubs: [number, number, number, number][] = [
-    [-28, -28,  0,  0],   // Savanna
-    [ 28, -28,  0,  0],   // Jungle
-    [ 28,  28,  0,  0],   // Reptile
-    [-28,  28,  0,  0],   // Aviary
-  ];
-  hubs.forEach(([hx, hz, cx, cz]) => addPathStrip(scene, hx, hz, cx, cz, 2.4));
-
-  // Outer ring path connecting all four habitats
-  const outerPts: THREE.Vector3[] = [];
-  const ringR = 18;
-  const outerSegs = 60;
-  for (let i = 0; i <= outerSegs; i++) {
-    const a = (i / outerSegs) * Math.PI * 2;
-    outerPts.push(new THREE.Vector3(Math.cos(a) * ringR, 0.015, Math.sin(a) * ringR));
+  // Scattered pebbles along the outer promenade perimeter
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2 + (Math.random() - 0.5) * 0.1;
+    const pr = 19.6 + (Math.random() - 0.5) * 0.3;
+    const pebble = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06 + Math.random() * 0.06, 4, 3),
+      M.pebbleMat,
+    );
+    pebble.position.set(Math.cos(a) * pr, 0.04, Math.sin(a) * pr);
+    scene.add(pebble);
   }
-  const outerCurve = new THREE.CatmullRomCurve3(outerPts, true);
-  const outerGeo   = new THREE.TubeGeometry(outerCurve, outerSegs * 2, 1.2, 5, true);
-  scene.add(new THREE.Mesh(outerGeo, M.pathMat));
 
-  // Pebble border strips
-  addPebbles(scene);
+  // 2. Gate coordinates located strictly outside each enclosure fence
+  const gateCoords: [number, number][] = HABITATS.slice(0, 4).map((h) => {
+    const len = Math.hypot(h.center.x, h.center.z);
+    const nx = h.center.x / len;
+    const nz = h.center.z / len;
+    const gateDist = len - (h.radius + 0.6);
+    return [nx * gateDist, nz * gateDist];
+  });
+
+  // 3. Spoke pathways connecting outer collar (r = 19.5) outwards to each gate
+  gateCoords.forEach(([gx, gz], idx) => {
+    const h = HABITATS[idx];
+    const len = Math.hypot(h.center.x, h.center.z);
+    const nx = h.center.x / len;
+    const nz = h.center.z / len;
+    const startR = 19.5; // Starts at outer edge of collar ring
+    const sx = nx * startR;
+    const sz = nz * startR;
+
+    // Path spoke terminates at fence entrance
+    addPathSegment(scene, sx, sz, gx, gz, 2.6);
+    // Gate entrance landing pad outside the fence
+    addPathCircle(scene, gx, gz, 2.4);
+  });
+
+  // 4. Outer boundary perimeter walkway at the far edges of the zoo park (r ~ 48)
+  const outerCorners: [number, number][] = [
+    [-46, -46], [46, -46], [46, 46], [-46, 46],
+  ];
+  for (let i = 0; i < outerCorners.length; i++) {
+    const [x1, z1] = outerCorners[i];
+    const [x2, z2] = outerCorners[(i + 1) % outerCorners.length];
+    addPathSegment(scene, x1, z1, x2, z2, 2.0);
+  }
 }
 
-function addPathCircle(scene: THREE.Scene, cx: number, cz: number, r: number): void {
-  const geo  = new THREE.CircleGeometry(r, 32);
-  geo.rotateX(-Math.PI / 2);
-  const mesh = new THREE.Mesh(geo, M.pathMat);
-  mesh.position.set(cx, 0.018, cz);
-  scene.add(mesh);
-}
-
-function addPathStrip(
+function addPathSegment(
   scene: THREE.Scene,
   x1: number, z1: number,
   x2: number, z2: number,
-  width: number,
+  width = 2.4,
 ): void {
   const dx = x2 - x1, dz = z2 - z1;
-  const len = Math.sqrt(dx * dx + dz * dz);
+  const lenSq = dx * dx + dz * dz;
+  if (lenSq < 0.1) return;
+
+  // Strict clamp: reject any path segment that intersects or passes inside the pond perimeter (r < 16.0)
+  const t = THREE.MathUtils.clamp(-(x1 * dx + z1 * dz) / lenSq, 0, 1);
+  const closestDist = Math.hypot(x1 + t * dx, z1 + t * dz);
+  if (closestDist < 16.0) return;
+
+  const len = Math.sqrt(lenSq);
   const ang = Math.atan2(dz, dx);
+
   const geo  = new THREE.PlaneGeometry(len, width);
   geo.rotateX(-Math.PI / 2);
   const mesh = new THREE.Mesh(geo, M.pathMat);
-  mesh.position.set((x1 + x2) / 2, 0.018, (z1 + z2) / 2);
+  mesh.position.set((x1 + x2) / 2, 0.03, (z1 + z2) / 2);
   mesh.rotation.y = -ang;
+  mesh.receiveShadow = true;
   scene.add(mesh);
-}
 
-function addPebbles(scene: THREE.Scene): void {
-  for (let i = 0; i < 80; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = 17 + (Math.random() - 0.5) * 2;
+  // Scattered path pebbles along the edges
+  const count = Math.floor(len * 1.5);
+  for (let i = 0; i < count; i++) {
+    const tPeb = Math.random();
+    const side = (Math.random() - 0.5) * (width + 0.5);
+    const px   = x1 + dx * tPeb - Math.sin(ang) * side;
+    const pz   = z1 + dz * tPeb + Math.cos(ang) * side;
+    if (Math.hypot(px, pz) < 16.0) continue; // Skip pebbles inside pond collar
+
     const pebble = new THREE.Mesh(
-      new THREE.SphereGeometry(0.08 + Math.random() * 0.10, 4, 3),
+      new THREE.SphereGeometry(0.06 + Math.random() * 0.08, 4, 3),
       M.pebbleMat,
     );
-    pebble.position.set(Math.cos(a) * r, 0.04, Math.sin(a) * r);
-    pebble.rotation.set(Math.random(), Math.random(), Math.random());
+    pebble.position.set(px, 0.04, pz);
+    scene.add(pebble);
+  }
+}
+
+function addPathCircle(scene: THREE.Scene, x: number, z: number, r: number): void {
+  if (Math.hypot(x, z) < 16.0) return; // Never inside pond
+
+  const geo  = new THREE.CircleGeometry(r, 28);
+  geo.rotateX(-Math.PI / 2);
+  const mesh = new THREE.Mesh(geo, M.pathMat);
+  mesh.position.set(x, 0.03, z);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  // Edge pebbles
+  for (let i = 0; i < 16; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const pr = r + (Math.random() - 0.5) * 0.5;
+    const px = x + Math.cos(a) * pr;
+    const pz = z + Math.sin(a) * pr;
+    if (Math.hypot(px, pz) < 16.0) continue;
+
+    const pebble = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07 + Math.random() * 0.07, 4, 3),
+      M.pebbleMat,
+    );
+    pebble.position.set(px, 0.04, pz);
     scene.add(pebble);
   }
 }
 
 // ============================================================================
-// WATER POND (Aquatic Zone)
+// WATER POND (Single Flat Circular Water Disc at Y = -0.2)
 // ============================================================================
 function buildWaterPond(scene: THREE.Scene, h: Habitat): void {
-  // Main water
-  const geo  = new THREE.CircleGeometry(h.radius - 1.5, 56);
+  // Single flat circular water disc sitting at Y = -0.2 (matching inner diameter of black boundary rim)
+  const waterRadius = 15.48;
+  const geo = new THREE.CircleGeometry(waterRadius, 64);
   geo.rotateX(-Math.PI / 2);
   const water = new THREE.Mesh(geo, M.water);
-  water.position.set(h.center.x, 0.06, h.center.z);
+  water.position.set(h.center.x, -0.20, h.center.z);
+  water.receiveShadow = true;
   scene.add(water);
-
-  // Sheen ring
-  for (let i = 1; i <= 4; i++) {
-    const rr = (h.radius - 1.5) * (i / 5);
-    const ringGeo = new THREE.RingGeometry(rr - 0.25, rr, 40);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ring = new THREE.Mesh(ringGeo, M.waterSheen);
-    ring.position.set(h.center.x, 0.07 + i * 0.002, h.center.z);
-    scene.add(ring);
-  }
-
-  // Lily pads
-  for (let i = 0; i < 8; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = Math.random() * (h.radius - 4);
-    buildLilyPad(scene, h.center.x + Math.cos(a) * r, h.center.z + Math.sin(a) * r);
-  }
-
-  // Pond rocks
-  for (let i = 0; i < 10; i++) {
-    const a = (i / 10) * Math.PI * 2;
-    buildRock(
-      scene,
-      h.center.x + Math.cos(a) * (h.radius - 1.0),
-      h.center.z + Math.sin(a) * (h.radius - 1.0),
-      0.3 + Math.random() * 0.55,
-    );
-  }
-}
-
-function buildLilyPad(scene: THREE.Scene, x: number, z: number): void {
-  const r   = 0.4 + Math.random() * 0.3;
-  const geo = new THREE.CircleGeometry(r, 10, 0.15, Math.PI * 1.7);
-  geo.rotateX(-Math.PI / 2);
-  const pad = new THREE.Mesh(geo, M.lilyMat);
-  pad.position.set(x, 0.09, z);
-  pad.rotation.y = Math.random() * Math.PI * 2;
-  scene.add(pad);
-
-  // Small flower on top
-  const flower = new THREE.Mesh(
-    new THREE.SphereGeometry(0.10, 6, 5),
-    M.lilyFlower,
-  );
-  flower.scale.y = 0.5;
-  flower.position.set(x, 0.14, z);
-  scene.add(flower);
 }
 
 // ============================================================================
-// PER-HABITAT SCENERY
+// PER-HABITAT SCENERY (Organic Perimeter Clusters & Open Centers)
 // ============================================================================
 function buildHabitatScenery(scene: THREE.Scene): void {
   HABITATS.forEach((h, i) => {
-    const treeCount = 7 + Math.floor(Math.random() * 4);
-    for (let k = 0; k < treeCount; k++) {
-      const angle = (k / treeCount) * Math.PI * 2 + i * 0.55;
-      const dist  = h.radius * (0.50 + Math.random() * 0.32);
-      const x     = h.center.x + Math.cos(angle) * dist;
-      const z     = h.center.z + Math.sin(angle) * dist;
-      if (i === 0) buildAcaciaTree(scene, x, z);
-      else if (i === 1) buildJungleTree(scene, x, z);
-      else if (i === 2) buildCactus(scene, x, z);
-      else if (i === 3) buildBirchTree(scene, x, z);
-      else { buildRock(scene, x, z, 0.4 + Math.random() * 0.5); }
-    }
+    if (i === 4) return; // Skip Aquatic Zone so water basin is completely uncluttered
 
-    // Bushes
-    const bushCount = 4 + Math.floor(Math.random() * 5);
-    for (let k = 0; k < bushCount; k++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist  = Math.random() * (h.radius - 3);
-      buildBush(scene, h.center.x + Math.cos(angle) * dist, h.center.z + Math.sin(angle) * dist, i);
-    }
+    // Direction pointing from habitat center to zoo center (the entrance direction)
+    const toCenter = new THREE.Vector2(-h.center.x, -h.center.z).normalize();
+    const gateAngle = Math.atan2(toCenter.y, toCenter.x);
 
-    // Rocks
-    const rockCount = 3 + Math.floor(Math.random() * 4);
-    for (let k = 0; k < rockCount; k++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist  = h.radius * (0.2 + Math.random() * 0.6);
-      buildRock(
-        scene,
-        h.center.x + Math.cos(angle) * dist,
-        h.center.z + Math.sin(angle) * dist,
-        0.25 + Math.random() * 0.6,
-      );
-    }
+    // 3 organic perimeter cluster centers away from gate
+    const clusterAngles = [
+      gateAngle + Math.PI * 0.52 + (Math.random() - 0.5) * 0.25,
+      gateAngle + Math.PI * 1.00 + (Math.random() - 0.5) * 0.25,
+      gateAngle + Math.PI * 1.48 + (Math.random() - 0.5) * 0.25,
+    ];
 
-    // Flowers (not in aquatic zone)
-    if (i !== 4) {
-      const flowerCount = 8 + Math.floor(Math.random() * 10);
-      for (let k = 0; k < flowerCount; k++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist  = Math.random() * (h.radius - 2);
-        buildFlower(scene, h.center.x + Math.cos(angle) * dist, h.center.z + Math.sin(angle) * dist, i);
+    clusterAngles.forEach((cAngle) => {
+      const clusterDist = h.radius * (0.65 + Math.random() * 0.16);
+      const cx = h.center.x + Math.cos(cAngle) * clusterDist;
+      const cz = h.center.z + Math.sin(cAngle) * clusterDist;
+
+      // 1-3 trees per organic cluster
+      const treeCount = 1 + Math.floor(Math.random() * 2);
+      for (let t = 0; t < treeCount; t++) {
+        const tx = cx + (Math.random() - 0.5) * 2.8;
+        const tz = cz + (Math.random() - 0.5) * 2.8;
+        if (Math.hypot(tx - h.center.x, tz - h.center.z) > h.radius - 1.8) continue;
+
+        if (i === 0) buildAcaciaTree(scene, tx, tz);
+        else if (i === 1) buildJungleTree(scene, tx, tz);
+        else if (i === 2) buildCactus(scene, tx, tz);
+        else if (i === 3) buildBirchTree(scene, tx, tz);
       }
+
+      // Bush near cluster
+      buildBush(scene, cx + (Math.random() - 0.5) * 1.5, cz + (Math.random() - 0.5) * 1.5, i);
+
+      // Natural rock cluster
+      buildRock(scene, cx + (Math.random() - 0.5) * 2.0, cz + (Math.random() - 0.5) * 2.0, 0.30 + Math.random() * 0.40);
+    });
+
+    // Scattered natural flowers along outer perimeter
+    for (let k = 0; k < 6; k++) {
+      const a = Math.random() * Math.PI * 2;
+      if (Math.abs(a - gateAngle) < 0.5) continue; // Keep gate viewing clear
+      const dist = h.radius * (0.62 + Math.random() * 0.24);
+      buildFlower(scene, h.center.x + Math.cos(a) * dist, h.center.z + Math.sin(a) * dist, i);
     }
   });
 }
 
 function buildGlobalGrass(scene: THREE.Scene): void {
   HABITATS.forEach((h, i) => {
+    if (i === 4) return; // Skip Aquatic Zone
     const count = 20 + Math.floor(Math.random() * 14);
     for (let k = 0; k < count; k++) {
       const angle = Math.random() * Math.PI * 2;
@@ -332,10 +344,11 @@ function buildGlobalGrass(scene: THREE.Scene): void {
       );
     }
   });
-  // Grass outside habitats too
+  // Grass outside habitats (skip any points near center aquatic pond)
   for (let k = 0; k < 60; k++) {
     const x = (Math.random() - 0.5) * 110;
     const z = (Math.random() - 0.5) * 110;
+    if (Math.hypot(x, z) < 18.0) continue;
     buildGrassTuft(scene, x, z, -1);
   }
 }
@@ -465,7 +478,7 @@ function buildCactus(scene: THREE.Scene, x: number, z: number): void {
 // BUSH
 // ============================================================================
 function buildBush(scene: THREE.Scene, x: number, z: number, habitatIdx: number): void {
-  const mats = [M.bushLight, M.bush, M.darkLeaf, M.lightLeaf, M.lilyMat];
+  const mats = [M.bushLight, M.bush, M.darkLeaf, M.lightLeaf, M.midLeaf];
   const bMat = mats[habitatIdx] ?? M.bush;
   const r  = 0.35 + Math.random() * 0.45;
   const n  = 2 + Math.floor(Math.random() * 3);
@@ -570,46 +583,6 @@ function buildGrassTuft(scene: THREE.Scene, x: number, z: number, habitatIdx: nu
     blade.rotation.z = (Math.random() - 0.5) * 0.35;
     scene.add(blade);
   }
-}
-
-// ============================================================================
-// PATH LAMPS — slimmer, warmer
-// ============================================================================
-function buildPathLamps(scene: THREE.Scene): void {
-  const positions: [number, number][] = [
-    [-5, -5], [5, -5], [-5, 5], [5, 5],
-    [-20, 0], [20, 0], [0, -20], [0, 20],
-    [-30, -30], [30, -30], [-30, 30], [30, 30],
-    [-15, -15], [15, -15], [-15, 15], [15, 15],
-  ];
-  positions.forEach(([x, z]) => {
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.055, 0.075, 4.0, 6),
-      M.lampMetal,
-    );
-    pole.position.set(x, 2.0, z);
-    scene.add(pole);
-
-    // Curved arm
-    const arm = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.035, 0.04, 0.9, 5),
-      M.lampMetal,
-    );
-    arm.position.set(x + 0.35, 4.0, z);
-    arm.rotation.z = -0.4;
-    scene.add(arm);
-
-    const lampHead = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 8, 6),
-      M.lampGlow,
-    );
-    lampHead.position.set(x + 0.6, 3.92, z);
-    scene.add(lampHead);
-
-    const pt = new THREE.PointLight(0xfff5bb, 0.7, 14);
-    pt.position.set(x + 0.6, 3.8, z);
-    scene.add(pt);
-  });
 }
 
 // ============================================================================

@@ -77,20 +77,29 @@ function roundRect(
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Build a single name label sprite
+// ---------------------------------------------------------------------------
+export function createNameLabelSprite(animal: AnimalData): THREE.Sprite {
+  const texture = drawNameTexture(animal.name);
+  const mat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  const aspect = CANVAS_W / CANVAS_H;
+  sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE / aspect, 1);
+  return sprite;
+}
+
+// ---------------------------------------------------------------------------
 // Build all label sprites
 // ---------------------------------------------------------------------------
 export function buildNameLabels(scene: THREE.Scene, animals: AnimalData[]): THREE.Sprite[] {
   return animals.map((animal) => {
-    const texture = drawNameTexture(animal.name);
-    const mat = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-    });
-    const sprite = new THREE.Sprite(mat);
-    const aspect = CANVAS_W / CANVAS_H;
-    sprite.scale.set(SPRITE_SCALE, SPRITE_SCALE / aspect, 1);
+    const sprite = createNameLabelSprite(animal);
     scene.add(sprite);
     return sprite;
   });

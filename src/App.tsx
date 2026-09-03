@@ -1,10 +1,41 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { ZooCanvas } from './components/ZooCanvas';
 import { HabitatLegend } from './components/HabitatLegend';
+import { AnimalCustomizerModal } from './components/AnimalCustomizerModal';
+import { AuthModal } from './components/AuthModal';
+import type { ZooSceneInstance } from './zoo/ZooScene';
+import { supabase } from './lib/supabaseClient';
 import './App.css';
 
 const App: React.FC = () => {
+  const [user, setUser]                   = useState<User | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [addAnimalOpen, setAddAnimalOpen] = useState(false);
+  const [zooScene, setZooScene]           = useState<ZooSceneInstance | null>(null);
+
+  // Initialize and listen to Supabase auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
+  };
 
   return (
     <div className="app">
@@ -27,69 +58,70 @@ const App: React.FC = () => {
           <span className="ctrl-badge" title="Click an animal">Click animal</span>
         </nav>
 
-        <button
-          className="btn-add-animal"
-          onClick={() => setAddAnimalOpen(true)}
-          aria-label="Add your animal drawing"
-        >
-          <span className="btn-add-icon" aria-hidden="true">✏️</span>
-          Add Your Animal
-        </button>
+        <div className="header-right-actions">
+          {/* User Auth Controls */}
+          {user ? (
+            <div className="user-profile-badge">
+              <span className="user-avatar-icon" aria-hidden="true">👤</span>
+              <span className="user-email" title={user.email}>{user.email}</span>
+              <button
+                type="button"
+                className="btn-sign-out"
+                onClick={handleSignOut}
+                aria-label="Sign Out"
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn-header-auth"
+              onClick={() => setAuthModalOpen(true)}
+              aria-label="Log In or Sign Up"
+            >
+              <span className="btn-auth-icon" aria-hidden="true">👤</span>
+              Log In / Sign Up
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="btn-add-animal"
+            onClick={() => setAddAnimalOpen(true)}
+            aria-label="Add and customize your animal"
+          >
+            <span className="btn-add-icon" aria-hidden="true">✏️</span>
+            Add Your Animal
+          </button>
+        </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────────── */}
       <main className="app-main">
-        <ZooCanvas />
+        <ZooCanvas onSceneReady={setZooScene} />
         <HabitatLegend />
       </main>
 
-      {/* ── Add Animal modal stub ──────────────────────────────────────── */}
+      {/* ── Auth Modal ─────────────────────────────────────────────────── */}
+      {authModalOpen && (
+        <AuthModal
+          onClose={() => setAuthModalOpen(false)}
+          onSuccess={() => setAuthModalOpen(false)}
+        />
+      )}
+
+      {/* ── Animal Customizer Modal ────────────────────────────────────── */}
       {addAnimalOpen && (
-        <>
-          <div
-            className="modal-overlay"
-            onClick={() => setAddAnimalOpen(false)}
-            aria-hidden="true"
-          />
-          <div
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Add your animal"
-          >
-            <button
-              className="modal-close"
-              onClick={() => setAddAnimalOpen(false)}
-              aria-label="Close"
-            >✕</button>
-
-            <div className="modal-icon" aria-hidden="true">🎨</div>
-            <h2 className="modal-title">Add Your Animal</h2>
-            <p className="modal-body">
-              Draw your favourite animal on paper, then photograph or scan it.
-              Upload it here and it will appear as an animated resident of DrawZoo!
-            </p>
-
-            <div className="modal-steps">
-              <div className="modal-step">
-                <span className="step-num">1</span>
-                <span>Draw your animal on white paper</span>
-              </div>
-              <div className="modal-step">
-                <span className="step-num">2</span>
-                <span>Take a clear photo or scan it</span>
-              </div>
-              <div className="modal-step">
-                <span className="step-num">3</span>
-                <span>Upload it below — coming soon!</span>
-              </div>
-            </div>
-
-            <button className="btn-upload-soon" disabled>
-              📤&nbsp; Upload Drawing (Coming Soon)
-            </button>
-          </div>
-        </>
+        <AnimalCustomizerModal
+          scene={zooScene}
+          user={user}
+          onOpenAuth={() => {
+            setAddAnimalOpen(false);
+            setAuthModalOpen(true);
+          }}
+          onClose={() => setAddAnimalOpen(false)}
+        />
       )}
     </div>
   );

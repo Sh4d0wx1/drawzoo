@@ -4,13 +4,14 @@ import { HABITATS } from './habitats';
 
 // ---------------------------------------------------------------------------
 // Movement speeds — world units per frame at ~60 fps
+// Calibrated with stride frequency to prevent foot-sliding
 // ---------------------------------------------------------------------------
 const SPEEDS: Record<string, number> = {
-  lion:     0.026,
-  elephant: 0.020,
-  giraffe:  0.024,
-  zebra:    0.028,
-  monkey:   0.055,   // fast between trees
+  lion:     0.028,
+  elephant: 0.018,
+  giraffe:  0.022,
+  zebra:    0.030,
+  monkey:   0.028,
   snake:    0.016,
   bird:     0.036,
   turtle:   0.007,
@@ -20,14 +21,15 @@ const SPEEDS: Record<string, number> = {
 
 const ARRIVAL_DIST = 1.4;
 const FLY_HEIGHT   = 3.4;   // bird cruising altitude
-const MONKEY_JUMP_HEIGHT = 2.8; // peak of tree-to-tree arc
 
 // Turn-rate per frame — how quickly the animal swings to face its target
 const TURN_RATE: Record<string, number> = {
-  elephant: 0.045,
-  giraffe:  0.050,
-  turtle:   0.06,
-  default:  0.10,
+  elephant: 0.040,
+  giraffe:  0.045,
+  lion:     0.080,
+  zebra:    0.090,
+  turtle:   0.060,
+  default:  0.100,
 };
 
 // Idle pause chance and duration ranges
@@ -37,7 +39,7 @@ const IDLE_RANGE: Record<string, [number, number]> = {
   elephant: [2.0, 5.0],
   giraffe:  [1.0, 3.0],
   zebra:    [0.8, 2.0],
-  monkey:   [0.3, 0.8],
+  monkey:   [1.0, 3.0],
   snake:    [2.0, 6.0],
   bird:     [0.3, 1.0],
   turtle:   [3.0, 8.0],
@@ -51,9 +53,14 @@ const IDLE_RANGE: Record<string, [number, number]> = {
 export function animateAnimals(
   animals: AnimalData[],
   elapsed: number,
-  _dt: number,
+  dt: number,
 ): void {
   animals.forEach(animal => {
+    // 1. Update embedded skeletal animations if mixer exists
+    if (animal.mixer) {
+      animal.mixer.update(dt);
+    }
+
     const t = elapsed + animal.phaseOffset;
 
     // Idle countdown — gentle breathing only
@@ -84,10 +91,11 @@ function getHabitat(animal: AnimalData) {
 
 function pickTarget(animal: AnimalData): THREE.Vector3 {
   const h = getHabitat(animal);
-  const margin = 3.5;
+  const margin = animal.animationType === 'swim' ? 4.5 : 3.5;
   const r = Math.sqrt(Math.random()) * (h.radius - margin);
   const a = Math.random() * Math.PI * 2;
-  return new THREE.Vector3(h.center.x + Math.cos(a) * r, 0, h.center.z + Math.sin(a) * r);
+  const y = animal.animationType === 'swim' ? -1.10 : 0;
+  return new THREE.Vector3(h.center.x + Math.cos(a) * r, y, h.center.z + Math.sin(a) * r);
 }
 
 /** Smoothly rotate the group to face (dx, dz) in world space.
@@ -125,11 +133,9 @@ function wander(animal: AnimalData, elapsed: number): void {
   }
 
   const spd = SPEEDS[animal.id] ?? 0.025;
-  const nx  = dx / dist;
-  const nz  = dz / dist;
-  pos.x += nx * spd;
-  pos.z += nz * spd;
   faceDirection(animal, dx, dz);
+  // Translate strictly along the forward vector instead of drifting sideways toward target
+  animal.group.translateZ(spd);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,20 +158,31 @@ function wanderFly(animal: AnimalData, elapsed: number): void {
   }
 
   const spd = SPEEDS['bird'];
-  const nx  = dx / dist;
-  const nz  = dz / dist;
-  pos.x += nx * spd;
-  pos.z += nz * spd;
   faceDirection(animal, dx, dz);
+  animal.group.translateZ(spd);
 }
 
 // ---------------------------------------------------------------------------
 // IDLE — breathing sway, slow head look-around
 // ---------------------------------------------------------------------------
 function animateIdle(animal: AnimalData, t: number): void {
-  // Micro body-rise on inhale
-  animal.group.position.y = Math.sin(t * 1.1) * 0.012;
+  // Micro body-rise on inhale (maintains submerged depth for aquatic animals)
+  if (animal.animationType === 'swim') {
+    animal.group.position.y = -1.10 + Math.sin(t * 1.1) * 0.04;
+  } else {
+    animal.group.position.y = Math.sin(t * 1.1) * 0.012;
+  }
   animal.group.rotation.z = Math.sin(t * 0.7) * 0.010;
+
+  const wrapper = animal.parts['modelWrapper'];
+  if (wrapper) {
+    const baseRotX = (wrapper.userData.baseRotX as number) ?? 0;
+    const baseRotY = (wrapper.userData.baseRotY as number) ?? wrapper.rotation.y;
+    const baseRotZ = (wrapper.userData.baseRotZ as number) ?? 0;
+    wrapper.rotation.x = baseRotX + Math.sin(t * 1.2) * 0.012;
+    wrapper.rotation.y = baseRotY + Math.sin(t * 0.6) * 0.010;
+    wrapper.rotation.z = baseRotZ;
+  }
 
   if (animal.parts['head']) {
     animal.parts['head'].rotation.x = Math.sin(t * 0.55) * 0.04;
@@ -177,29 +194,112 @@ function animateIdle(animal: AnimalData, t: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// WALK  — diagonal (trot) gait
-//
-// Real quadruped diagonal: FL and BR swing forward together, FR and BL
-// swing forward together, 180° out of phase.
-//
-// Upper pivot rotation.x:  positive = thigh swings FORWARD (toe toward front)
-//                          negative = thigh swings BACK
-// Lower pivot rotation.x:  positive = knee bends so lower-leg kicks BACK
-//                          (this is the "knee lift" — shank trails behind
-//                           then snaps forward as the leg plants)
-//
-// We model one step cycle as a sine wave on the upper pivot.
-// The lower (knee) bend is derived as a half-rectified lag so the knee only
-// bends when the leg is in the swing (lifted) phase.
+// SAVANNA QUADRUPED GAIT (Lion, Zebra, Elephant, Giraffe)
+// ---------------------------------------------------------------------------
+function animateSavannaWalk(animal: AnimalData, t: number): void {
+  const isElephant = animal.id === 'elephant';
+  const isGiraffe  = animal.id === 'giraffe';
+  const isLion     = animal.id === 'lion';
+  const isZebra    = animal.id === 'zebra';
+
+  // Specific frequencies tuned to match step lengths
+  let freq = 3.2;
+
+  if (isElephant) {
+    freq = 2.1;
+  } else if (isGiraffe) {
+    freq = 2.4;
+  } else if (isLion) {
+    freq = 3.2;
+  } else if (isZebra) {
+    freq = 3.6;
+  }
+
+  // Model Wrapper Secondary Motion (Enhances both rigged GLTF models & procedural meshes)
+  const wrapper = animal.parts['modelWrapper'];
+  if (wrapper) {
+    const baseRotX = (wrapper.userData.baseRotX as number) ?? 0;
+    const baseRotY = (wrapper.userData.baseRotY as number) ?? wrapper.rotation.y;
+    const baseRotZ = (wrapper.userData.baseRotZ as number) ?? 0;
+
+    if (isGiraffe) {
+      // Giraffe: slow, majestic stride, gentle forward/backward neck counter-sway, high ground clearance
+      wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.030;
+      wrapper.rotation.x = baseRotX + Math.sin(t * freq) * 0.038;
+      wrapper.rotation.y = baseRotY + Math.sin(t * freq * 0.5) * 0.018;
+      animal.group.position.y = Math.abs(Math.sin(t * freq)) * 0.035;
+    } else if (isElephant) {
+      // Elephant: heavy, deliberate pacing, subtle torso bounce, horizontal head/trunk sway
+      wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.024;
+      wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.020;
+      wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.022;
+      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.025;
+    } else if (isLion) {
+      // Lion: supple feline strides with rhythmic shoulder roll & spine pitch
+      wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.040;
+      wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.032;
+      wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.020;
+      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.020;
+    } else if (isZebra) {
+      // Zebra: active, smooth equine strides with rhythmic gallop/trot bounce
+      wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.045;
+      wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.036;
+      wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.024;
+      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.028;
+    }
+  }
+
+  // Head and Neck secondary motion
+  if (animal.parts['head']) {
+    if (isGiraffe) {
+      animal.parts['head'].rotation.x = Math.sin(t * freq) * 0.06;
+      animal.parts['head'].rotation.y = Math.sin(t * freq * 0.5) * 0.04;
+    } else if (isElephant) {
+      animal.parts['head'].rotation.y = Math.sin(t * freq) * 0.07;
+      animal.parts['head'].rotation.x = Math.sin(t * freq * 2.0) * 0.03;
+    } else if (isLion || isZebra) {
+      animal.parts['head'].rotation.x = Math.sin(t * freq * 2.0) * 0.04;
+      animal.parts['head'].rotation.y = Math.sin(t * freq) * 0.03;
+    }
+  }
+
+  if (animal.parts['neck'] && (isGiraffe || isLion || isZebra)) {
+    animal.parts['neck'].rotation.x = Math.sin(t * freq) * 0.05;
+  }
+
+  if (animal.parts['tail']) {
+    animal.parts['tail'].rotation.y = Math.sin(t * freq * 1.5) * 0.20;
+  }
+
+  if (isElephant) {
+    // S-curve trunk sway
+    for (let i = 0; i < 5; i++) {
+      const seg = animal.parts[`trunk${i}`];
+      if (seg) {
+        // Delay phase for each segment to create a wave
+        seg.rotation.x = Math.sin(t * freq * 1.2 - i * 0.5) * 0.15;
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WALK  — generic diagonal trot gait for non-savanna walkers
 // ---------------------------------------------------------------------------
 function animateWalk(animal: AnimalData, t: number): void {
+  // Exclusively route savanna animals to custom quadruped gait
+  if (['lion', 'zebra', 'elephant', 'giraffe'].includes(animal.id)) {
+    animateSavannaWalk(animal, t);
+    return;
+  }
+
   const speed = SPEEDS[animal.id] ?? 0.025;
   // Step frequency scales with movement speed so fast animals step faster
   const freq  = THREE.MathUtils.clamp(speed * 110, 2.2, 5.5);
 
-  // Upper thigh swing amplitude — bigger for faster/more energetic animals
+  // Upper thigh swing amplitude
   const swingAmp  = 0.40;
-  // Knee-bend amplitude (how much the lower leg kicks back during swing)
+  // Knee-bend amplitude
   const kneeBend  = 0.55;
 
   // Phase values — diagonal pairs 180° apart
@@ -213,8 +313,6 @@ function animateWalk(animal: AnimalData, t: number): void {
     phase: number,
   ): void {
     const thighAngle = phase * swingAmp;
-    // Knee bends backward when leg is in swing phase (phase > 0 = forward swing)
-    // We use max(0, phase) so knee only bends during the lift, stays straight on plant
     const kneeAngle  = Math.max(0, phase) * kneeBend;
 
     upperNames.forEach(n => {
@@ -240,20 +338,90 @@ function animateWalk(animal: AnimalData, t: number): void {
     phB,
   );
 
-  // For turtle: use FL/FR/BL/BR keys mapped to the group pivot keys it has
-  // (Turtle legs are plain groups not buildLeg — rotate around Z for paddling)
+  // Dynamic procedural quadruped locomotion for imported 3D models (GLB models)
+  const wrapper = animal.parts['modelWrapper'];
+  if (wrapper) {
+    const baseRotX = (wrapper.userData.baseRotX as number) ?? 0;
+    const baseRotY = (wrapper.userData.baseRotY as number) ?? wrapper.rotation.y;
+    const baseRotZ = (wrapper.userData.baseRotZ as number) ?? 0;
+
+    // Natural quadruped walking gait:
+    // Alternating shoulder / hip roll with each stride
+    wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.042;
+    // Forward / backward pitch as paws / hooves push off
+    wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.026;
+    // Subtle rhythmic yaw heading sway
+    wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.022;
+  }
+
+  // For turtle: slow forward / backward rowing paddling flipper motion
   if (animal.id === 'turtle') {
-    const tFreq  = 1.8;
-    const tPhase = Math.sin(t * tFreq);
-    ['legFL', 'legFR', 'legBL', 'legBR'].forEach((n, i) => {
-      const leg = animal.parts[n];
-      if (!leg) return;
-      const sign = (i % 2 === 0 ? 1 : -1);
-      // Diagonal: FL+BR together, FR+BL together
-      const ph   = (i < 2 ? tPhase : -tPhase) * sign * 0.30;
-      leg.rotation.x = ph;
+    const tFreq = 2.0;
+    const paddlePhase = Math.sin(t * tFreq);
+    const recoveryPhase = Math.cos(t * tFreq);
+
+    ['FL', 'FR', 'BL', 'BR'].forEach(key => {
+      const flipper = animal.parts[`flipper${key}`] ?? animal.parts[`leg${key}`];
+      if (!flipper) return;
+      const baseRotY = (flipper.userData['baseRotY'] as number) ?? flipper.rotation.y;
+      const baseRotZ = (flipper.userData['baseRotZ'] as number) ?? flipper.rotation.z;
+      const isLeft = key.endsWith('L');
+      const isFront = key.startsWith('F');
+
+      // Rowing stroke: angle around Y (forward / backward rowing)
+      const sign = isLeft ? 1 : -1;
+      const strokeAmp = isFront ? 0.44 : 0.32;
+      const phase = isFront ? paddlePhase : Math.sin(t * tFreq + Math.PI * 0.5);
+
+      flipper.rotation.y = baseRotY + phase * strokeAmp * sign;
+      // Hydrodynamic feathering pitch during recovery
+      flipper.rotation.x = recoveryPhase * 0.12 * (isFront ? 1 : 0.6);
+      flipper.rotation.z = baseRotZ + Math.sin(t * tFreq) * 0.06 * sign;
     });
+
+    // Slow head look-around / bob
+    if (animal.parts['head']) {
+      animal.parts['head'].rotation.y = Math.sin(t * 1.1) * 0.12;
+      animal.parts['head'].rotation.x = Math.sin(t * tFreq) * 0.04;
+    }
     animal.group.position.y = 0;
+    return;
+  }
+
+  // For monkey: quadruped / knuckle-walking grounded gait with arm/leg swing,
+  // elbow/knee articulation, hip sway, synchronized vertical bounce, and tail curl
+  if (animal.id === 'monkey') {
+    const mFreq = 3.6;
+    const phA = Math.sin(t * mFreq);            // Front-Left Arm + Back-Right Leg
+    const phB = Math.sin(t * mFreq + Math.PI);  // Front-Right Arm + Back-Left Leg
+
+    // Forelimb Arm swing (Shoulders & Elbows)
+    if (animal.parts['lArm']) animal.parts['lArm'].rotation.x = phA * 0.38;
+    if (animal.parts['lElbow']) animal.parts['lElbow'].rotation.x = -0.15 + Math.max(0, phA) * 0.25;
+    if (animal.parts['rArm']) animal.parts['rArm'].rotation.x = phB * 0.38;
+    if (animal.parts['rElbow']) animal.parts['rElbow'].rotation.x = -0.15 + Math.max(0, phB) * 0.25;
+
+    // Hind Leg swing (Hips & Knees)
+    if (animal.parts['legBL']) animal.parts['legBL'].rotation.x = phB * 0.36;
+    if (animal.parts['legLowerBL']) animal.parts['legLowerBL'].rotation.x = Math.max(0, phB) * 0.35;
+    if (animal.parts['legBR']) animal.parts['legBR'].rotation.x = phA * 0.36;
+    if (animal.parts['legLowerBR']) animal.parts['legLowerBR'].rotation.x = Math.max(0, phA) * 0.35;
+
+    // Head subtle bob
+    if (animal.parts['head']) {
+      animal.parts['head'].rotation.x = Math.sin(t * mFreq) * 0.04;
+      animal.parts['head'].rotation.y = Math.sin(t * 0.8) * 0.08;
+    }
+
+    // Prehensile tail curl & idle sway
+    if (animal.parts['tail']) {
+      animal.parts['tail'].rotation.y = Math.sin(t * 1.5) * 0.22;
+      animal.parts['tail'].rotation.x = 0.15 + Math.sin(t * 3.0) * 0.10;
+    }
+
+    // Subtle hip sway and vertical bounce synced to each footstep
+    animal.group.rotation.z = Math.sin(t * mFreq) * 0.018;
+    animal.group.position.y = Math.abs(Math.sin(t * mFreq)) * 0.024;
     return;
   }
 
@@ -270,11 +438,10 @@ function animateWalk(animal: AnimalData, t: number): void {
     animal.parts['tail'].rotation.y = Math.sin(t * freq * 0.55) * 0.22;
   }
 
-  // Subtle body rise — body lifts very slightly each time a pair of legs
-  // pushes off.  abs(sin) gives two peaks per cycle.
-  animal.group.position.y = Math.abs(Math.sin(t * freq)) * 0.028;
+  // Subtle body rise — body lifts very slightly each time a pair of legs pushes off
+  animal.group.position.y = Math.abs(Math.sin(t * freq)) * 0.035;
   // Subtle lateral lean into each step
-  animal.group.rotation.z = Math.sin(t * freq) * 0.014;
+  animal.group.rotation.z = Math.sin(t * freq) * 0.015;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,192 +483,87 @@ function animateHop(animal: AnimalData, t: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// JUMP  — monkey tree-to-tree arc
-//
-// Monkey leaps from perch to perch.  During the arc the body is airborne —
-// we interpolate XZ position and add a sin() arc for Y.
-// Arms reach out overhead during flight, tuck on landing.
+// JUMP  — jump fallback (walks along ground)
 // ---------------------------------------------------------------------------
 function animateJump(animal: AnimalData, t: number, elapsed: number): void {
-  const g = animal.group as THREE.Group & { _perches?: THREE.Vector3[] };
-  const perches = g._perches;
-
-  if (!perches || perches.length === 0) {
-    // Fallback to ground wander if no perches
-    animateWalk(animal, t);
-    wander(animal, elapsed);
-    return;
-  }
-
-  // --- wander toward current perch (3-D including Y) ---
-  const pos    = animal.group.position;
-  const target = animal.wanderTarget;
-
-  const dx   = target.x - pos.x;
-  const dy   = target.y - pos.y;
-  const dz   = target.z - pos.z;
-  const dist = Math.sqrt(dx * dx + dz * dz); // horizontal distance
-
-  // Arrived at perch
-  if (dist < ARRIVAL_DIST && Math.abs(dy) < 0.8) {
-    // Brief perch pause
-    if (Math.random() < 0.6) {
-      const [mn, mx] = IDLE_RANGE['monkey'];
-      animal.idleUntil = elapsed + mn + Math.random() * (mx - mn);
-    }
-    // Pick next perch
-    const cur = perches.indexOf(target);
-    const next = (cur + 1 + Math.floor(Math.random() * (perches.length - 1))) % perches.length;
-    animal.wanderTarget = perches[next].clone();
-    return;
-  }
-
-  // Horizontal move
-  const spd = SPEEDS['monkey'];
-  if (dist > 0.01) {
-    const nx = dx / dist;
-    const nz = dz / dist;
-    pos.x += nx * spd;
-    pos.z += nz * spd;
-    faceDirection(animal, dx, dz);
-  }
-
-  // Vertical arc — sin parabola based on progress from last perch to this one
-  // We estimate progress as how close we are relative to max distance
-  const totalDist = 14; // rough max tree-to-tree distance
-  const progress  = THREE.MathUtils.clamp(1 - dist / totalDist, 0, 1);
-  const arc       = Math.sin(progress * Math.PI) * MONKEY_JUMP_HEIGHT;
-  pos.y           = target.y + arc;   // arc above the destination height
-
-  // --- Body animation during flight ---
-  const airFraction = Math.sin(progress * Math.PI); // 0→1→0
-
-  // Arms throw overhead at peak
-  if (animal.parts['lArm']) {
-    animal.parts['lArm'].rotation.x = -airFraction * 1.8;   // reach up/forward
-    animal.parts['lArm'].rotation.z =  0.3 - airFraction * 0.5;
-  }
-  if (animal.parts['rArm']) {
-    animal.parts['rArm'].rotation.x = -airFraction * 1.8;
-    animal.parts['rArm'].rotation.z =  0.3 - airFraction * 0.5;
-  }
-
-  // Legs tuck up during flight
-  for (const n of ['legBL', 'legBR']) {
-    const upper = animal.parts[n];
-    const lower = animal.parts[`legLower${n.slice(3)}`];
-    if (upper) upper.rotation.x = -airFraction * 0.8;
-    if (lower) lower.rotation.x =  airFraction * 0.6;
-  }
-
-  // Head looks toward target
-  if (animal.parts['head']) {
-    animal.parts['head'].rotation.x = -airFraction * 0.25;
-  }
-
-  // Body pitches forward slightly
-  animal.group.rotation.x = -airFraction * 0.18;
-
-  // Tail curls up
-  if (animal.parts['tail']) {
-    animal.parts['tail'].rotation.z = airFraction * 0.8;
-  }
+  animateWalk(animal, t);
+  wander(animal, elapsed);
 }
 
 // ---------------------------------------------------------------------------
-// SLITHER  — snake body as a live CatmullRom tube
+// SLITHER  — continuous sinusoidal lateral displacement along articulated spine
+// Displaces each vertebra along local lateral axis with amplitude decreasing toward head
 // ---------------------------------------------------------------------------
 function animateSlither(animal: AnimalData, t: number): void {
-  type SnakeGroup = THREE.Group & {
-    _snakeCurvePoints?: THREE.Vector3[];
-    _snakeCurve?: THREE.CatmullRomCurve3;
-    _snakeTube?: THREE.Mesh;
-  };
-  const g = animal.group as SnakeGroup;
-  const pts   = g._snakeCurvePoints;
-  const curve = g._snakeCurve;
-  const tube  = g._snakeTube;
+  const speed = 3.4;
+  const phaseOffset = 0.32;
+  const minAmp = 0.08;
+  const maxAmp = 0.44;
+  const numSegs = (animal.group.userData['numSnakeSegs'] as number) ?? 22;
 
-  if (!pts || !curve || !tube) return;
+  for (let i = 0; i < numSegs; i++) {
+    const seg = animal.parts[`seg_${i}`];
+    if (!seg) continue;
+    const u = i / (numSegs - 1);
+    const amp = minAmp + (maxAmp - minAmp) * u;
+    const lateral = Math.sin(t * speed - i * phaseOffset) * amp;
+    const yaw = Math.cos(t * speed - i * phaseOffset) * (0.22 + 0.40 * u);
 
-  const waveFreq = 2.0;
-  const waveAmp  = 0.28;
-  const coilR    = 0.65;
-  const n        = pts.length;
-
-  for (let i = 0; i < n; i++) {
-    const frac       = i / (n - 1);
-    const baseAngle  = frac * Math.PI * 2.2;
-    const r          = coilR * (1 - frac * 0.45);
-    const lateral    = Math.sin(baseAngle - t * waveFreq) * waveAmp * (1 - frac * 0.4);
-    pts[i].x = Math.cos(baseAngle) * r + Math.cos(baseAngle + Math.PI / 2) * lateral;
-    pts[i].z = Math.sin(baseAngle) * r + Math.sin(baseAngle + Math.PI / 2) * lateral;
-    pts[i].y = 0.10;
+    seg.position.z = lateral;
+    seg.rotation.y = yaw;
   }
 
-  curve.points = pts;
-  const newGeo = new THREE.TubeGeometry(curve, 80, 0.09, 10, false);
-  tube.geometry.dispose();
-  tube.geometry = newGeo;
-
+  // Head guides the motion with subtle sinusoidal sway
   if (animal.parts['head']) {
-    const headPos = curve.getPoint(0);
-    animal.parts['head'].position.copy(headPos);
-    const tangent = curve.getTangent(0);
-    animal.parts['head'].rotation.y = Math.atan2(tangent.x, tangent.z);
+    const headLateral = Math.sin(t * speed) * minAmp;
+    const headYaw = Math.cos(t * speed) * 0.22;
+    animal.parts['head'].position.z = headLateral;
+    animal.parts['head'].rotation.y = headYaw;
   }
+
+  // Rapid forked tongue flicking in and out
   if (animal.parts['tongue']) {
-    animal.parts['tongue'].scale.z = 0.5 + Math.abs(Math.sin(t * 7)) * 1.0;
+    const flickCycle = Math.sin(t * 7.5);
+    const isFlicking = flickCycle > 0.45;
+    animal.parts['tongue'].position.x = 0.20 + (isFlicking ? 0.09 : 0);
+    animal.parts['tongue'].rotation.z = isFlicking ? Math.sin(t * 26.0) * 0.25 : 0;
+    animal.parts['tongue'].scale.setScalar(isFlicking ? 1.0 : 0.6);
   }
 }
 
 // ---------------------------------------------------------------------------
-// FLY  — bird with proper wing flap
-//
-// Wing pivots sit at each shoulder; feathers extend outward along ±Z.
-// rotation.z of the pivot rotates the entire wing panel up / down.
-//
-//   rotation.z  =  0.0  → wings level (glide)
-//   rotation.z  = -1.3  → wings fully raised  (top of upstroke)
-//   rotation.z  = +0.6  → wings depressed     (bottom of downstroke)
-//
-// The downstroke is faster than the upstroke (real bird aerodynamics).
-// We model this with a remapped sine: sawtooth-ish, snapping up quickly
-// and sweeping down more slowly.
+// FLY  — realistic avian aerodynamics
+// Symmetrical wing counter-rotation along longitudinal roll axis,
+// backward feather pitch tilt on downstroke, and synchronized vertical body lift.
 // ---------------------------------------------------------------------------
 function animateFly(animal: AnimalData, t: number): void {
-  const flapFreq = 3.8;   // flaps per second
+  const flapSpeed = 4.4;
+  const flapAngle = 0.58;
 
-  // Asymmetric flap: use a distorted sine so down-stroke is faster
-  const raw  = Math.sin(t * flapFreq * Math.PI * 2);
-  // Compress the upstroke half (raw>0) and stretch the downstroke (raw<0)
-  const flap = raw > 0
-    ? Math.pow(raw, 0.6) * 1.0   // quick upstroke  → top of arc
-    : -Math.pow(-raw, 1.4) * 0.8;// slow downstroke → pull through
-
-  // Map to rotation: up = negative Z rotation (left wing), positive for right
-  const flapAngle = flap * 1.1;
+  const flapSine = Math.sin(t * flapSpeed);
+  // Synchronized pitch tilt: feathers pitch slightly backward on the downstroke
+  const pitchLag = -flapSine * 0.14;
 
   if (animal.parts['lWing']) {
-    animal.parts['lWing'].rotation.z = -flapAngle;   // left wing: up = neg Z
-    // Slight feather-fanning: tips trail slightly behind inner panel
-    animal.parts['lWing'].rotation.x = -0.08 + Math.abs(flap) * 0.12;
+    animal.parts['lWing'].rotation.z = flapSine * flapAngle;
+    animal.parts['lWing'].rotation.x = pitchLag;
   }
   if (animal.parts['rWing']) {
-    animal.parts['rWing'].rotation.z =  flapAngle;   // right wing: up = pos Z
-    animal.parts['rWing'].rotation.x = -0.08 + Math.abs(flap) * 0.12;
+    animal.parts['rWing'].rotation.z = -flapSine * flapAngle;
+    animal.parts['rWing'].rotation.x = -pitchLag;
   }
 
-  // Head bobs subtly with effort
+  // Head bobs subtly with the flap effort
   if (animal.parts['head']) {
-    animal.parts['head'].rotation.x = Math.sin(t * flapFreq * Math.PI * 2) * 0.07;
+    animal.parts['head'].rotation.x = flapSine * 0.05;
   }
 
-  // Smooth altitude float
-  animal.group.position.y = FLY_HEIGHT + Math.sin(t * 0.9) * 0.38;
+  // Vertical body bobbing in phase with the flap cycle to simulate aerodynamic lift
+  const liftBob = Math.sin(t * flapSpeed) * 0.12;
+  const altitudeFloat = Math.sin(t * 0.85) * 0.32;
+  animal.group.position.y = FLY_HEIGHT + liftBob + altitudeFloat;
 
-  // Bank gently into turns: read the group's own Y rotation rate
-  // (We approximate by applying a small Z rotation proportional to heading)
+  // Bank gently into turns
   animal.group.rotation.z = -Math.sin(animal.group.rotation.y) * 0.04;
 }
 
@@ -512,7 +574,8 @@ function animateSwim(animal: AnimalData, t: number): void {
   const freq = 2.2;
   const sway = Math.sin(t * freq);
 
-  animal.group.position.y = 0.30 + Math.sin(t * freq * 0.8) * 0.06;
+  // Submerged mid-depth in open water between floor (Y = -2.20) and top surface (Y = -0.20)
+  animal.group.position.y = -1.10 + Math.sin(t * freq * 0.8) * 0.08;
 
   // Caudal sweep — biggest motion, whole rear of body
   if (animal.parts['tail']) {

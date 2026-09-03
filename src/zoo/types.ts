@@ -38,6 +38,8 @@ export interface AnimalData {
   idleUntil?: number;
   /** For jump type: current arc height added on top of wander y */
   jumpArcY?: number;
+  /** Optional THREE.AnimationMixer for GLB embedded skeletal animations */
+  mixer?: THREE.AnimationMixer;
 }
 
 export interface ZooState {
