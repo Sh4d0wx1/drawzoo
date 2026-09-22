@@ -40,6 +40,10 @@ export interface AnimalData {
   jumpArcY?: number;
   /** Optional THREE.AnimationMixer for GLB embedded skeletal animations */
   mixer?: THREE.AnimationMixer;
+  /** Current per-part color values as hex numbers, keyed by part key */
+  colorParts?: Record<string, number>;
+  /** References to materials for each colorizable part, keyed by part key */
+  colorMaterials?: Record<string, THREE.MeshLambertMaterial[]>;
 }
 
 export interface ZooState {

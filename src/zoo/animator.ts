@@ -1,26 +1,29 @@
 import * as THREE from 'three';
 import type { AnimalData } from './types';
 import { HABITATS } from './habitats';
+import { savannaWaterHole } from './animals';
 
 // ---------------------------------------------------------------------------
 // Movement speeds — world units per frame at ~60 fps
 // Calibrated with stride frequency to prevent foot-sliding
 // ---------------------------------------------------------------------------
 const SPEEDS: Record<string, number> = {
-  lion:     0.028,
+  lion:     0.014,
   elephant: 0.018,
-  giraffe:  0.022,
-  zebra:    0.030,
+  giraffe:  0.011,
+  zebra:    0.015,
   monkey:   0.028,
   snake:    0.016,
   bird:     0.036,
   turtle:   0.007,
   fish:     0.020,
+  shark:    0.025,
   rabbit:   0.032,
+  wolf:     0.020,
 };
 
 const ARRIVAL_DIST = 1.4;
-const FLY_HEIGHT   = 3.4;   // bird cruising altitude
+const FLY_HEIGHT   = 5.0;   // bird cruising altitude (fits inside r=30 aviary dome)
 
 // Turn-rate per frame — how quickly the animal swings to face its target
 const TURN_RATE: Record<string, number> = {
@@ -28,8 +31,10 @@ const TURN_RATE: Record<string, number> = {
   giraffe:  0.045,
   lion:     0.080,
   zebra:    0.090,
-  turtle:   0.060,
-  default:  0.100,
+  turtle:   0.030,
+  shark:    0.080,
+  wolf:     0.090,
+  default:  0.060,
 };
 
 // Idle pause chance and duration ranges
@@ -78,6 +83,7 @@ export function animateAnimals(
       case 'fly':     animateFly(animal, t);     wanderFly(animal, elapsed);       break;
       case 'swim':    animateSwim(animal, t);    wander(animal, elapsed);          break;
     }
+
   });
 }
 
@@ -92,21 +98,33 @@ function getHabitat(animal: AnimalData) {
 function pickTarget(animal: AnimalData): THREE.Vector3 {
   const h = getHabitat(animal);
   const margin = animal.animationType === 'swim' ? 4.5 : 3.5;
-  const r = Math.sqrt(Math.random()) * (h.radius - margin);
-  const a = Math.random() * Math.PI * 2;
+  const rad = Math.max(0.1, h.radius - margin); // Clamp to prevent NaN distance
   const y = animal.animationType === 'swim' ? -1.10 : 0;
-  return new THREE.Vector3(h.center.x + Math.cos(a) * r, y, h.center.z + Math.sin(a) * r);
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const r = Math.sqrt(Math.random()) * rad;
+    const a = Math.random() * Math.PI * 2;
+    const pt = new THREE.Vector3(h.center.x + Math.cos(a) * r, y, h.center.z + Math.sin(a) * r);
+    
+    // Reroll if inside savanna water hole
+    if (animal.habitat === 'Savanna') {
+      const dx = pt.x - savannaWaterHole.center.x;
+      const dz = pt.z - savannaWaterHole.center.y;
+      if (Math.hypot(dx, dz) < savannaWaterHole.radius) continue;
+    }
+    return pt;
+  }
+  // Fallback
+  return h.center.clone();
 }
 
-/** Smoothly rotate the group to face (dx, dz) in world space.
- *  Models are built facing +X locally but the modelPivot pre-rotates -π/2 Y,
- *  so the effective world-forward is +Z when group.rotation.y = 0.
- *  atan2(dx, dz) gives the Y rotation needed for +Z forward to point toward (dx,dz). */
+/** Smoothly rotate the group to face (dx, dz) in world space — Euler Y only */
 function faceDirection(animal: AnimalData, dx: number, dz: number): void {
   if (Math.abs(dx) < 0.0001 && Math.abs(dz) < 0.0001) return;
   const target = Math.atan2(dx, dz);
   const cur    = animal.group.rotation.y;
   let delta    = target - cur;
+  // Shortest-arc wrap
   while (delta >  Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
   const rate = TURN_RATE[animal.id] ?? TURN_RATE['default'];
@@ -119,8 +137,42 @@ function faceDirection(animal: AnimalData, dx: number, dz: number): void {
 function wander(animal: AnimalData, elapsed: number): void {
   const pos    = animal.group.position;
   const target = animal.wanderTarget;
-  const dx = target.x - pos.x;
-  const dz = target.z - pos.z;
+
+  let dx = target.x - pos.x;
+  let dz = target.z - pos.z;
+
+  // Repulsion & Path correction for Savanna animals
+  if (animal.habitat === 'Savanna') {
+    const wx = savannaWaterHole.center.x;
+    const wz = savannaWaterHole.center.y;
+    const wr = savannaWaterHole.radius;
+    
+    // Hard physical boundary push if they somehow get inside
+    const dxPos = pos.x - wx;
+    const dzPos = pos.z - wz;
+    const distToCenter = Math.hypot(dxPos, dzPos);
+    
+    if (distToCenter < wr) {
+      const rep = (wr - distToCenter) * 0.1; 
+      pos.x += (dxPos / distToCenter) * rep;
+      pos.z += (dzPos / distToCenter) * rep;
+    }
+    
+    // Steering avoidance (Flow field)
+    const avoidRadius = wr + 4.0;
+    if (distToCenter < avoidRadius) {
+      const repStrength = Math.max(0, (avoidRadius - distToCenter) / 4.0);
+      // Pushes the desired direction outward
+      dx += (dxPos / distToCenter) * repStrength * 8.0;
+      dz += (dzPos / distToCenter) * repStrength * 8.0;
+      
+      // Tangent force to skirt the edge
+      const tangentDir = animal.id === 'elephant' ? 1 : -1;
+      dx += (-dzPos / distToCenter) * repStrength * 6.0 * tangentDir;
+      dz += (dxPos / distToCenter) * repStrength * 6.0 * tangentDir;
+    }
+  }
+
   const dist = Math.sqrt(dx * dx + dz * dz);
 
   if (dist < ARRIVAL_DIST) {
@@ -134,8 +186,12 @@ function wander(animal: AnimalData, elapsed: number): void {
 
   const spd = SPEEDS[animal.id] ?? 0.025;
   faceDirection(animal, dx, dz);
-  // Translate strictly along the forward vector instead of drifting sideways toward target
-  animal.group.translateZ(spd);
+
+  // Move directly toward target on the XZ plane (never affects Y)
+  const nx = dx / dist;
+  const nz = dz / dist;
+  pos.x += nx * spd;
+  pos.z += nz * spd;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +215,12 @@ function wanderFly(animal: AnimalData, elapsed: number): void {
 
   const spd = SPEEDS['bird'];
   faceDirection(animal, dx, dz);
-  animal.group.translateZ(spd);
+
+  // Move directly toward target on XZ plane
+  const nx = dx / dist;
+  const nz = dz / dist;
+  pos.x += nx * spd;
+  pos.z += nz * spd;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,8 +230,8 @@ function animateIdle(animal: AnimalData, t: number): void {
   // Micro body-rise on inhale (maintains submerged depth for aquatic animals)
   if (animal.animationType === 'swim') {
     animal.group.position.y = -1.10 + Math.sin(t * 1.1) * 0.04;
-  } else {
-    animal.group.position.y = Math.sin(t * 1.1) * 0.012;
+  } else if (animal.animationType === 'fly') {
+    animal.group.position.y = FLY_HEIGHT + Math.sin(t * 1.1) * 0.12;
   }
   animal.group.rotation.z = Math.sin(t * 0.7) * 0.010;
 
@@ -227,30 +288,26 @@ function animateSavannaWalk(animal: AnimalData, t: number): void {
       wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.030;
       wrapper.rotation.x = baseRotX + Math.sin(t * freq) * 0.038;
       wrapper.rotation.y = baseRotY + Math.sin(t * freq * 0.5) * 0.018;
-      animal.group.position.y = Math.abs(Math.sin(t * freq)) * 0.035;
     } else if (isElephant) {
       // Elephant: heavy, deliberate pacing, subtle torso bounce, horizontal head/trunk sway
       wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.024;
       wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.020;
       wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.022;
-      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.025;
     } else if (isLion) {
       // Lion: supple feline strides with rhythmic shoulder roll & spine pitch
       wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.040;
       wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.032;
       wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.020;
-      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.020;
     } else if (isZebra) {
       // Zebra: active, smooth equine strides with rhythmic gallop/trot bounce
       wrapper.rotation.z = baseRotZ + Math.sin(t * freq) * 0.045;
       wrapper.rotation.x = baseRotX + Math.sin(t * freq * 2.0) * 0.036;
       wrapper.rotation.y = baseRotY + Math.sin(t * freq) * 0.024;
-      animal.group.position.y = Math.abs(Math.sin(t * freq * 2.0)) * 0.028;
     }
   }
 
-  // Head and Neck secondary motion
-  if (animal.parts['head']) {
+  // Head and Neck secondary motion (skip if embedded skeleton handles it)
+  if (animal.parts['head'] && !animal.mixer) {
     if (isGiraffe) {
       animal.parts['head'].rotation.x = Math.sin(t * freq) * 0.06;
       animal.parts['head'].rotation.y = Math.sin(t * freq * 0.5) * 0.04;
@@ -263,15 +320,15 @@ function animateSavannaWalk(animal: AnimalData, t: number): void {
     }
   }
 
-  if (animal.parts['neck'] && (isGiraffe || isLion || isZebra)) {
+  if (animal.parts['neck'] && !animal.mixer && (isGiraffe || isLion || isZebra)) {
     animal.parts['neck'].rotation.x = Math.sin(t * freq) * 0.05;
   }
 
-  if (animal.parts['tail']) {
+  if (animal.parts['tail'] && !animal.mixer) {
     animal.parts['tail'].rotation.y = Math.sin(t * freq * 1.5) * 0.20;
   }
 
-  if (isElephant) {
+  if (isElephant && !animal.mixer) {
     // S-curve trunk sway
     for (let i = 0; i < 5; i++) {
       const seg = animal.parts[`trunk${i}`];
@@ -438,8 +495,6 @@ function animateWalk(animal: AnimalData, t: number): void {
     animal.parts['tail'].rotation.y = Math.sin(t * freq * 0.55) * 0.22;
   }
 
-  // Subtle body rise — body lifts very slightly each time a pair of legs pushes off
-  animal.group.position.y = Math.abs(Math.sin(t * freq)) * 0.035;
   // Subtle lateral lean into each step
   animal.group.rotation.z = Math.sin(t * freq) * 0.015;
 }

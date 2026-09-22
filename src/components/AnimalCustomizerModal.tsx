@@ -9,6 +9,7 @@ import type { AnimalRecord } from '../lib/supabaseClient';
 interface AnimalCustomizerModalProps {
   scene: ZooSceneInstance | null;
   user: User | null;
+  isAdmin: boolean;
   onOpenAuth: () => void;
   onClose: () => void;
 }
@@ -31,38 +32,50 @@ const PRESET_PALETTES: string[] = [
 ];
 
 const NAME_SUGGESTIONS: Record<string, string[]> = {
-  rabbit:   ['Barnaby', 'Clover', 'Thumper', 'Cotton', 'Pip'],
-  lion:     ['Leo', 'Simba', 'Aslan', 'Kibo', 'Roary'],
+  rabbit: ['Barnaby', 'Clover', 'Thumper', 'Cotton', 'Pip'],
+  lion: ['Leo', 'Simba', 'Aslan', 'Kibo', 'Roary'],
   elephant: ['Peanut', 'Babar', 'Dumbo', 'Tembo', 'Ellie'],
-  zebra:    ['Marty', 'Ziggy', 'Eclipse', 'Shadow', 'Dash'],
-  giraffe:  ['Geoffrey', 'Twiga', 'Pip', 'Sunny', 'Opal'],
-  fish:     ['Nemo', 'Bubbles', 'Finley', 'Coral', 'Splash'],
-  turtle:   ['Shelly', 'Franklin', 'Crush', 'Speedy', 'Toby'],
-  snake:    ['Sly', 'Kaa', 'Basil', 'Nagini', 'Zigzag'],
-  bird:     ['Pip', 'Sky', 'Rio', 'Zazu', 'Feathers'],
-  monkey:   ['Milo', 'George', 'Coco', 'Abu', 'Chimpy'],
+  zebra: ['Marty', 'Ziggy', 'Eclipse', 'Shadow', 'Dash'],
+  giraffe: ['Geoffrey', 'Twiga', 'Pip', 'Sunny', 'Opal'],
+  fish: ['Nemo', 'Bubbles', 'Finley', 'Coral', 'Splash'],
+  turtle: ['Shelly', 'Franklin', 'Crush', 'Speedy', 'Toby'],
+  snake: ['Sly', 'Kaa', 'Basil', 'Nagini', 'Zigzag'],
+  bird: ['Pip', 'Sky', 'Rio', 'Zazu', 'Feathers'],
+  monkey: ['Milo', 'George', 'Coco', 'Abu', 'Chimpy'],
 };
 
 export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
   scene,
   user,
+  isAdmin,
   onOpenAuth,
   onClose,
 }) => {
   const [selectedSpecies, setSelectedSpecies] = useState<SpeciesOption>(ANIMAL_SPECIES[0]);
-  const [customName, setCustomName]           = useState<string>(ANIMAL_SPECIES[0].defaultName);
-  const [customColor, setCustomColor]         = useState<string>(ANIMAL_SPECIES[0].defaultColor);
+  const [customName, setCustomName] = useState<string>(ANIMAL_SPECIES[0].defaultName);
+  const [customColors, setCustomColors] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    ANIMAL_SPECIES[0].colorParts.forEach(p => init[p.key] = p.defaultColor);
+    return init;
+  });
 
-  const [existingAnimal, setExistingAnimal]   = useState<AnimalRecord | null>(null);
+  const [existingAnimal, setExistingAnimal] = useState<AnimalRecord | null>(null);
   const [checkingExisting, setCheckingExisting] = useState<boolean>(true);
-  const [submitting, setSubmitting]           = useState<boolean>(false);
-  const [submitError, setSubmitError]         = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Check if the current user already has an animal in public.animals
   useEffect(() => {
     let isMounted = true;
     async function checkUserAnimal() {
       if (!user) {
+        setExistingAnimal(null);
+        setCheckingExisting(false);
+        return;
+      }
+
+      // Admins can spawn unlimited animals, bypass the single animal check
+      if (isAdmin) {
         setExistingAnimal(null);
         setCheckingExisting(false);
         return;
@@ -75,12 +88,12 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
           .from('animals')
           .select('*')
           .eq('user_id', user.id)
-          .maybeSingle();
+          .limit(1);
 
         if (error) {
           console.warn('Could not check user existing animal:', error.message);
         } else if (isMounted) {
-          setExistingAnimal(data as AnimalRecord | null);
+          setExistingAnimal(data && data.length > 0 ? (data[0] as AnimalRecord) : null);
         }
       } catch (err) {
         console.warn('Error checking existing animal:', err);
@@ -95,7 +108,9 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
 
   const handleSelectSpecies = (species: SpeciesOption) => {
     setSelectedSpecies(species);
-    setCustomColor(species.defaultColor);
+    const newColors: Record<string, string> = {};
+    species.colorParts.forEach(p => newColors[p.key] = p.defaultColor);
+    setCustomColors(newColors);
     const suggestions = NAME_SUGGESTIONS[species.id] || [species.defaultName];
     setCustomName(suggestions[Math.floor(Math.random() * suggestions.length)]);
   };
@@ -122,12 +137,14 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (checkingExisting || submitting) return;
+
     if (!user) {
       onOpenAuth();
       return;
     }
 
-    if (existingAnimal) {
+    if (existingAnimal && !isAdmin) {
       return;
     }
 
@@ -142,7 +159,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
           user_id: user.id,
           species: selectedSpecies.id,
           name: finalName,
-          color: customColor,
+          color: JSON.stringify(customColors),
         })
         .select()
         .single();
@@ -154,7 +171,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
             user_id: user.id,
             species: selectedSpecies.id,
             name: finalName,
-            color: customColor,
+            color: JSON.stringify(customColors),
           });
         } else {
           setSubmitError(error.message);
@@ -164,7 +181,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
 
       // Add to local scene immediately
       if (scene) {
-        scene.addAnimal(selectedSpecies.id, finalName, customColor, data?.id);
+        scene.addAnimal(selectedSpecies.id, finalName, undefined, data?.id, true, customColors);
       }
       onClose();
     } catch (err: unknown) {
@@ -211,7 +228,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
               <span className="banner-icon" aria-hidden="true">👤</span>
               <div className="banner-text">
                 <strong>Sign in to add your animal</strong>
-                <p>Each explorer gets one permanent animal in the DrawZoo park!</p>
+                <p>Each explorer gets one permanent animal in the Arvo Ai Zoo park!</p>
               </div>
             </div>
             <button
@@ -224,7 +241,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
           </div>
         )}
 
-        {user && existingAnimal && (
+        {user && existingAnimal && !isAdmin && (
           <div className="customizer-existing-banner">
             <div className="banner-content">
               <span className="banner-icon" aria-hidden="true">🎉</span>
@@ -269,7 +286,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
                     onClick={() => handleSelectSpecies(s)}
                     role="radio"
                     aria-checked={isSelected}
-                    disabled={!!existingAnimal}
+                    disabled={!!existingAnimal && !isAdmin}
                   >
                     <span className="species-emoji" aria-hidden="true">{s.emoji}</span>
                     <span className="species-name">{s.name}</span>
@@ -295,7 +312,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
                 maxLength={24}
                 placeholder="Enter animal name..."
                 required
-                disabled={!!existingAnimal}
+                disabled={!!existingAnimal && !isAdmin}
               />
               <button
                 type="button"
@@ -303,7 +320,7 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
                 onClick={handleRandomizeName}
                 title="Randomize name suggestion"
                 aria-label="Randomize name suggestion"
-                disabled={!!existingAnimal}
+                disabled={!!existingAnimal && !isAdmin}
               >
                 🎲
               </button>
@@ -313,48 +330,53 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
           {/* 3. Color Customizer */}
           <div className="customizer-section">
             <label className="customizer-section-title">
-              3. Primary Coat / Body Color
+              3. Colors
             </label>
-            <div className="color-palette-container">
-              <div className="color-swatches" role="radiogroup" aria-label="Choose color palette">
-                {PRESET_PALETTES.map(col => {
-                  const isColActive = customColor.toLowerCase() === col.toLowerCase();
-                  return (
-                    <button
-                      key={col}
-                      type="button"
-                      className={`color-swatch-btn ${isColActive ? 'active' : ''}`}
-                      style={{ backgroundColor: col }}
-                      onClick={() => setCustomColor(col)}
-                      aria-label={`Color ${col}`}
-                      role="radio"
-                      aria-checked={isColActive}
-                      disabled={!!existingAnimal}
-                    />
-                  );
-                })}
-              </div>
-
-              {/* Native color picker */}
-              <div className="custom-color-picker-wrapper">
-                <label htmlFor="custom-color-picker" className="color-picker-label">
-                  <span
-                    className="custom-color-preview"
-                    style={{ backgroundColor: customColor }}
-                  />
-                  <span className="color-picker-text">Custom Tint:</span>
-                  <span className="color-hex-badge">{customColor.toUpperCase()}</span>
-                </label>
-                <input
-                  id="custom-color-picker"
-                  type="color"
-                  className="native-color-picker"
-                  value={customColor}
-                  onChange={e => setCustomColor(e.target.value)}
-                  aria-label="Custom color picker"
-                  disabled={!!existingAnimal}
-                />
-              </div>
+            <div className="color-parts-list">
+              {selectedSpecies.colorParts.map(part => (
+                <div key={part.key} className="color-part-row">
+                  <div className="color-part-label">{part.label}</div>
+                  <div className="color-palette-container">
+                    <div className="color-swatches" role="radiogroup" aria-label={`Choose ${part.label} color`}>
+                      {PRESET_PALETTES.slice(0, 5).map(col => {
+                        const isColActive = customColors[part.key]?.toLowerCase() === col.toLowerCase();
+                        return (
+                          <button
+                            key={col}
+                            type="button"
+                            className={`color-swatch-btn ${isColActive ? 'active' : ''}`}
+                            style={{ backgroundColor: col }}
+                            onClick={() => setCustomColors(prev => ({ ...prev, [part.key]: col }))}
+                            aria-label={`Color ${col}`}
+                            role="radio"
+                            aria-checked={isColActive}
+                            disabled={!!existingAnimal && !isAdmin}
+                          />
+                        );
+                      })}
+                    </div>
+                    {/* Native color picker */}
+                    <div className="custom-color-picker-wrapper">
+                      <label htmlFor={`custom-color-picker-${part.key}`} className="color-picker-label">
+                        <span
+                          className="custom-color-preview"
+                          style={{ backgroundColor: customColors[part.key] || part.defaultColor }}
+                        />
+                        <span className="color-hex-badge">{(customColors[part.key] || part.defaultColor).toUpperCase()}</span>
+                      </label>
+                      <input
+                        id={`custom-color-picker-${part.key}`}
+                        type="color"
+                        className="native-color-picker"
+                        value={customColors[part.key] || part.defaultColor}
+                        onChange={e => setCustomColors(prev => ({ ...prev, [part.key]: e.target.value }))}
+                        aria-label={`Custom ${part.label} color picker`}
+                        disabled={!!existingAnimal && !isAdmin}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -367,11 +389,16 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
                 {selectedSpecies.name} &bull; {selectedSpecies.habitat}
               </span>
             </div>
-            <span
-              className="preview-color-dot"
-              style={{ backgroundColor: customColor }}
-              title={`Color: ${customColor}`}
-            />
+            <div className="preview-colors-list" style={{ display: 'flex', gap: '4px' }}>
+              {Object.values(customColors).map((c, i) => (
+                <span
+                  key={i}
+                  className="preview-color-dot"
+                  style={{ backgroundColor: c, width: '14px', height: '14px', borderRadius: '50%', border: '1px solid rgba(255,255,255,0.3)' }}
+                  title={`Color: ${c}`}
+                />
+              ))}
+            </div>
           </div>
 
           {/* Action Buttons */}
@@ -387,13 +414,13 @@ export const AnimalCustomizerModal: React.FC<AnimalCustomizerModalProps> = ({
             {!user ? (
               <button
                 type="button"
-                className="btn-customizer-submit"
+                className="btn-paw-icon btn-customizer-submit"
                 onClick={onOpenAuth}
               >
                 <span className="btn-paw-icon" aria-hidden="true">🔑</span>
                 Log In to Add Animal
               </button>
-            ) : existingAnimal ? (
+            ) : existingAnimal && !isAdmin ? (
               <button
                 type="button"
                 className="btn-customizer-submit disabled"

@@ -29,6 +29,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
         if (error) throw error;
 
         if (data.session) {
+
           onSuccess?.();
           onClose();
         } else {
@@ -40,6 +41,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
           password,
         });
         if (error) throw error;
+
+
 
         onSuccess?.();
         onClose();
@@ -77,7 +80,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
         <div className="auth-header-section">
           <div className="auth-header-icon" aria-hidden="true">🔑</div>
           <h2 id="auth-modal-title" className="auth-title">
-            {mode === 'login' ? 'Welcome Back!' : 'Join DrawZoo'}
+            {mode === 'login' ? 'Welcome Back!' : 'Join Arvo Ai Zoo'}
           </h2>
           <p className="auth-subtitle">
             {mode === 'login'

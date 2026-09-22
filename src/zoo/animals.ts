@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { AnimalData, HabitatName } from './types';
 import { HABITATS } from './habitats';
+import { getSavedAnimalName, isAnimalReleased } from './storage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,13 +61,17 @@ function loadGLBModel(
           if ((child as THREE.Mesh).isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            if (animalData) child.userData.animal = animalData;
-            (child as THREE.Mesh).material = new THREE.MeshStandardMaterial({
-              color: 0x8c8f94,
+            const mesh = child as THREE.Mesh;
+            mesh.material = new THREE.MeshStandardMaterial({
+              color: animalData?.colorParts?.body ?? animalData?.color ?? 0x8c8f94,
               roughness: 0.85,
               metalness: 0.05,
               side: THREE.DoubleSide,
             });
+            if (animalData) {
+              if (!animalData.colorMaterials) animalData.colorMaterials = { body: [] };
+              animalData.colorMaterials.body.push(mesh.material as THREE.MeshLambertMaterial);
+            }
           }
         });
       } else if (config.isLion) {
@@ -151,17 +156,56 @@ function loadGLBModel(
             if (animalData) child.userData.animal = animalData;
             const mesh = child as THREE.Mesh;
             if (mesh.material) {
-              const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-              mats.forEach(m => {
+              const srcMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+              
+              // Clone materials uniquely per instance so color pickers don't tint all animals of the same species globally
+              const clonedMats = srcMats.map(m => m.clone());
+              mesh.material = clonedMats.length === 1 ? clonedMats[0] : clonedMats;
+
+              clonedMats.forEach(m => {
                 m.side = THREE.DoubleSide;
-                if (config.materialColor !== undefined && 'color' in m) {
-                  (m as THREE.MeshStandardMaterial).color.setHex(config.materialColor);
+                
+                // Match the part key dynamically using naming heuristics
+                let partKey = 'body'; // Default
+                const nameStr = `${mesh.name} ${m.name}`.toLowerCase();
+                
+                if (animalData && animalData.colorParts) {
+                  if (/(stripe)/.test(nameStr)) partKey = 'stripes';
+                  else if (/(spot)/.test(nameStr)) partKey = 'spots';
+                  else if (/(mane|hair)/.test(nameStr)) partKey = 'mane';
+                  else if (/(horn|ossicone)/.test(nameStr)) partKey = 'horns';
+                  else if (/(muzzle|nose)/.test(nameStr)) partKey = 'muzzle';
+                  else if (/(snout)/.test(nameStr)) partKey = 'snout';
+                  else if (/(belly|under)/.test(nameStr)) partKey = 'belly';
+                  else if (/(fin)/.test(nameStr)) partKey = 'fins';
+                  else if (/(tail)/.test(nameStr)) partKey = 'tail';
+                  else if (/(eye|pupil|iris)/.test(nameStr)) partKey = 'eyes';
+                  
+                  // Ensure the matched part exists in this species' configuration, otherwise fallback to body
+                  if (!(partKey in animalData.colorParts)) {
+                    if (partKey === 'snout' && 'muzzle' in animalData.colorParts) partKey = 'muzzle';
+                    else if (partKey === 'muzzle' && 'snout' in animalData.colorParts) partKey = 'snout';
+                    else if (!(partKey in animalData.colorParts)) partKey = 'body';
+                  }
                 }
+
+                const targetColor = animalData?.colorParts?.[partKey] ?? animalData?.colorParts?.['body'] ?? animalData?.color ?? config.materialColor;
+                if (targetColor !== undefined && 'color' in m) {
+                  (m as THREE.MeshStandardMaterial).color.set(targetColor);
+                }
+                
                 if ('roughness' in m) {
                   (m as THREE.MeshStandardMaterial).roughness = config.roughness ?? 0.80;
                 }
                 if ('metalness' in m) {
                   (m as THREE.MeshStandardMaterial).metalness = config.metalness ?? 0.05;
+                }
+                
+                // Register material in colorMaterials map for dynamic updates from UI
+                if (animalData) {
+                  if (!animalData.colorMaterials) animalData.colorMaterials = {};
+                  if (!animalData.colorMaterials[partKey]) animalData.colorMaterials[partKey] = [];
+                  animalData.colorMaterials[partKey].push(m as THREE.MeshLambertMaterial);
                 }
               });
             }
@@ -173,7 +217,8 @@ function loadGLBModel(
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
       const height = size.y > 0 ? size.y : 1;
-      const baseScale = (config.targetHeight / height) * (config.scaleMultiplier ?? 1.0);
+      const GLOBAL_ANIMAL_SCALE = 1.3; // Moderate upscale for legibility at default camera distance
+      const baseScale = (config.targetHeight / height) * (config.scaleMultiplier ?? 1.0) * GLOBAL_ANIMAL_SCALE;
       model.scale.setScalar(baseScale);
 
       // Re-compute bounding box after scale to align properly
@@ -181,11 +226,15 @@ function loadGLBModel(
       const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
 
       // Center horizontally on pivot and place all feet on ground Y = 0
-      model.position.x = -scaledCenter.x;
-      model.position.y = -scaledBox.min.y + (config.yOffset ?? 0);
-      model.position.z = -scaledCenter.z;
-
+      // We use an inner wrapper to apply the centering offset, so the outer wrapper's origin is perfectly at the feet.
+      const innerWrapper = new THREE.Group();
+      innerWrapper.position.x = -scaledCenter.x;
+      innerWrapper.position.y = -scaledBox.min.y;
+      innerWrapper.position.z = -scaledCenter.z;
+      innerWrapper.add(model);
+      
       // 4. Wrapper group for orientation (DrawZoo models face local +X)
+      // Since innerWrapper centers the model, this wrapper's origin is now exactly at the feet (Y=0).
       const wrapper = new THREE.Group();
       if (config.rotationX !== undefined) wrapper.rotation.x = config.rotationX;
       if (config.rotationY !== undefined) wrapper.rotation.y = config.rotationY;
@@ -193,7 +242,10 @@ function loadGLBModel(
       wrapper.userData.baseRotX = config.rotationX ?? 0;
       wrapper.userData.baseRotY = config.rotationY ?? 0;
       wrapper.userData.baseRotZ = config.rotationZ ?? 0;
-      wrapper.add(model);
+      
+      wrapper.position.y = (config.yOffset ?? 0);
+
+      wrapper.add(innerWrapper);
       pivot.add(wrapper);
 
       if (animalData) {
@@ -224,10 +276,29 @@ function loadGLBModel(
 
       // 6. Embedded skeletal animation mixer support
       if (gltf.animations && gltf.animations.length > 0) {
+        // Strip vertical root motion from base bones to prevent scaled models from flying into the air
+        gltf.animations.forEach(clip => {
+          clip.tracks.forEach(track => {
+            if (track.name.endsWith('.position')) {
+              // If it's a root-like bone, freeze its Y translation to the first frame's value
+              if (/(root|pelvis|hip|object|armature|rig|body_04|spine|character)/i.test(track.name)) {
+                const vals = track.values;
+                if (vals.length >= 3) {
+                  const initialY = vals[1];
+                  for (let i = 1; i < vals.length; i += 3) {
+                    vals[i] = initialY;
+                  }
+                }
+              }
+            }
+          });
+        });
+
         const mixer = new THREE.AnimationMixer(model);
-        // Prefer walk/run clip, fall back to idle, then first available
+        // Prefer walk/trot clip, fall back to run/move, then idle, then first available
         const walkOrIdleClip =
-          gltf.animations.find(a => /walk|run|trot|move/i.test(a.name)) ??
+          gltf.animations.find(a => /walk|trot/i.test(a.name)) ??
+          gltf.animations.find(a => /run|move/i.test(a.name)) ??
           gltf.animations.find(a => /idle|stand|breath/i.test(a.name)) ??
           gltf.animations[0];
         const action = mixer.clipAction(walkOrIdleClip);
@@ -235,13 +306,13 @@ function loadGLBModel(
 
         // Calibrate playback speed per species
         if (config.isElephant) {
-          action.timeScale = 0.7;
+          action.timeScale = 0.35;
         } else if (config.isLion) {
-          action.timeScale = 1.0;
+          action.timeScale = 0.5;
         } else if (animalData?.id === 'giraffe') {
-          action.timeScale = 0.8;
+          action.timeScale = 0.4;
         } else if (animalData?.id === 'zebra') {
-          action.timeScale = 1.1;
+          action.timeScale = 0.55;
         }
 
         action.play();
@@ -408,28 +479,38 @@ export function buildMonkeyPerches(): THREE.Vector3[] {
   return perches;
 }
 
+export const savannaWaterHole = {
+  center: new THREE.Vector2(-48 - 8, -48 - 8),
+  radius: (37 * 0.28) + 0.6 // ~10.96
+};
+
 // ---------------------------------------------------------------------------
 // LION
 // ---------------------------------------------------------------------------
-function buildLion(pos: THREE.Vector3): AnimalData {
+// ELEPHANT
+// ---------------------------------------------------------------------------
+function buildElephant(_pos: THREE.Vector3): AnimalData {
   const { group, pivot } = makeGroupWithPivot();
   const parts: Record<string, THREE.Object3D> = {};
   const habitat = HABITATS[0];
+  
+  // Reposition elephant near the watering hole
+  const spawnPos = new THREE.Vector3(habitat.center.x - 3, 0, habitat.center.z - 3);
 
   const animal: AnimalData = {
-    id: 'lion', name: 'Lion', habitat: 'Savanna', position: pos,
-    color: 0xe1b068, accentColor: 0x7d512a, animationType: 'walk',
+    id: 'elephant', name: 'Elephant', habitat: 'Savanna', position: spawnPos,
+    color: 0x8c8f94, accentColor: 0x555555, animationType: 'walk',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 2.4,
+    labelHeight: 4.4,
   };
 
   loadGLBModel(pivot, {
-    url: '/models/lion.glb',
-    targetHeight: 1.8,
-    rotationY: Math.PI / 2,
-    isLion: true,
+    url: '/models/elephant.glb',
+    targetHeight: 2.8,
+    rotationY: Math.PI / 2, // 90 degrees to compensate for native orientation
+    isElephant: true,
     isSavanna: true,
   }, animal);
 
@@ -437,29 +518,54 @@ function buildLion(pos: THREE.Vector3): AnimalData {
 }
 
 // ---------------------------------------------------------------------------
-// ELEPHANT
+// SHARK
 // ---------------------------------------------------------------------------
-function buildElephant(pos: THREE.Vector3): AnimalData {
+function buildShark(pos: THREE.Vector3): AnimalData {
   const { group, pivot } = makeGroupWithPivot();
   const parts: Record<string, THREE.Object3D> = {};
-  const habitat = HABITATS[0];
+  const habitat = HABITATS.find(h => h.name === 'Aquatic Zone')!;
 
   const animal: AnimalData = {
-    id: 'elephant', name: 'Elephant', habitat: 'Savanna', position: pos,
-    color: 0x8c8f94, accentColor: 0x555555, animationType: 'walk',
+    id: 'shark', name: 'Shark', habitat: 'Aquatic Zone', position: pos,
+    color: 0x4aa6de, accentColor: 0x225577, animationType: 'swim',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 3.4,
+    labelHeight: 2.6,
+    colorParts: { body: 0xffffff, belly: 0xffffff, fins: 0xffffff, eyes: 0xffffff },
   };
 
   loadGLBModel(pivot, {
-    url: '/models/elephant.glb',
-    targetHeight: 2.8,
-    rotationY: Math.PI / 2,
-    resetMeshTransforms: true,
-    isElephant: true,
-    isSavanna: true,
+    url: '/models/shark.glb',
+    targetHeight: 1.5,
+    rotationY: Math.PI / 2, // Depending on orientation; default to facing Z
+  }, animal);
+
+  return animal;
+}
+
+// ---------------------------------------------------------------------------
+// BABY WOLF
+// ---------------------------------------------------------------------------
+function buildWolf(pos: THREE.Vector3): AnimalData {
+  const { group, pivot } = makeGroupWithPivot();
+  const parts: Record<string, THREE.Object3D> = {};
+  const habitat = HABITATS.find(h => h.name === 'Jungle')!;
+
+  const animal: AnimalData = {
+    id: 'wolf', name: 'Baby Wolf', habitat: 'Jungle', position: pos,
+    color: 0x777777, accentColor: 0x333333, animationType: 'walk',
+    group, parts, phaseOffset: Math.random() * Math.PI * 2,
+    patrolPath: [], patrolIndex: 0, patrolT: 0,
+    wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
+    labelHeight: 3.2,
+    colorParts: { body: 0xffffff, belly: 0xffffff, tail: 0xffffff, snout: 0xffffff, eyes: 0xffffff },
+  };
+
+  loadGLBModel(pivot, {
+    url: '/models/baby_wolf.glb',
+    targetHeight: 1.5,
+    rotationY: Math.PI / 2, // Depending on orientation; default to facing Z
   }, animal);
 
   return animal;
@@ -479,7 +585,8 @@ function buildGiraffe(pos: THREE.Vector3): AnimalData {
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 5.8,
+    labelHeight: 8.8,
+    colorParts: { body: 0xe3a857, spots: 0x7b3f00, mane: 0x7a3400, horns: 0x443322, eyes: 0x0a0a0a },
   };
 
   loadGLBModel(pivot, {
@@ -489,6 +596,7 @@ function buildGiraffe(pos: THREE.Vector3): AnimalData {
     roughness: 0.80,
     metalness: 0.05,
     isSavanna: true,
+    yOffset: 0.1, // Adjusted from 1.2 which was causing it to hover
   }, animal);
 
   return animal;
@@ -508,16 +616,18 @@ function buildZebra(pos: THREE.Vector3): AnimalData {
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 2.6,
+    labelHeight: 3.4,
+    colorParts: { body: 0xffffff, stripes: 0x1a1a1a, mane: 0x1a1a1a, muzzle: 0x333333, eyes: 0x0a0a0a },
   };
 
   loadGLBModel(pivot, {
     url: '/models/zebra.glb',
     targetHeight: 2.1,
-    rotationY: Math.PI / 2,
+    rotationY: -Math.PI / 2,
     roughness: 0.80,
     metalness: 0.05,
     isSavanna: true,
+    yOffset: -1.0, // Significantly push hooves down to counteract its huge bounding box
   }, animal);
 
   return animal;
@@ -688,13 +798,16 @@ function buildMonkey(pos: THREE.Vector3): AnimalData {
   addTo(tailG, cyl(0.015, 0.024, 0.20, 8), furM, -0.24, -0.36, 0, 0, 0,  0.75);
 
   const habitat = HABITATS[1];
+  group.scale.setScalar(2.1875); // 1.25 * 1.75
   return {
     id: 'monkey', name: 'Monkey', habitat: 'Jungle', position: pos,
     color: 0x60421d, accentColor: 0xeecbb0, animationType: 'walk',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 1.4,
+    labelHeight: 1.8,
+    colorParts: { body: 0x60421d, face: 0xeecbb0, tail: 0x60421d },
+    colorMaterials: { body: [furM], face: [skinM], tail: [furM] },
   };
 }
 
@@ -789,13 +902,16 @@ function buildSnake(pos: THREE.Vector3): AnimalData {
   addTo(tongueG, cyl(0.004, 0.008, 0.08, 4), tongueM,  0.08, 0, -0.022, 0, -0.3, Math.PI / 2);
 
   const habitat = HABITATS[2];
+  group.scale.setScalar(1.25);
   return {
     id: 'snake', name: 'Snake', habitat: 'Reptile Zone', position: pos,
     color: 0x2e7a2e, accentColor: 0x1a4f1a, animationType: 'slither',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 1.2,
+    labelHeight: 1.6,
+    colorParts: { body: 0x2d7c2d, pattern: 0x164416, eyes: 0xddcc00, tongue: 0xdd1818 },
+    colorMaterials: { body: [bodyM, bellyM], pattern: [scaleM], eyes: [eyeM], tongue: [tongueM] },
   };
 }
 
@@ -952,13 +1068,16 @@ function buildBird(pos: THREE.Vector3): AnimalData {
   });
 
   const habitat = HABITATS[3];
+  group.scale.setScalar(1.35);
   return {
     id: 'bird', name: 'Tropical Bird', habitat: 'Aviary', position: pos,
     color: 0xe85520, accentColor: 0xeecc00, animationType: 'fly',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 5.4,
+    labelHeight: 7.0,
+    colorParts: { body: 0xeb4818, wings: 0xff7020, pattern: 0xffcc00, eyes: 0x0a0a0a },
+    colorMaterials: { body: [bM], wings: [wingM, tipM], pattern: [yellowM], eyes: [eyeM] },
   };
 }
 
@@ -1103,13 +1222,16 @@ function buildTurtle(pos: THREE.Vector3): AnimalData {
   });
 
   const habitat = HABITATS[2];
+  group.scale.setScalar(1.3);
   return {
     id: 'turtle', name: 'Turtle', habitat: 'Reptile Zone', position: pos,
     color: 0x5a6b32, accentColor: 0x8ea65d, animationType: 'walk',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 1.5,
+    labelHeight: 1.6,
+    colorParts: { shell: 0x5a6b32, limbs: 0x8ea65d, eyes: 0x0e0e0e },
+    colorMaterials: { shell: [shellM, shellDkM, scuteM, ridgeM, plastronM], limbs: [skinM, skinLtM], eyes: [eyeM] },
   };
 }
 
@@ -1207,7 +1329,7 @@ function createStripeGeometry(
   }
 
   for (let r = 0; r < rings; r++) {
-    for (let s = 0; s < segments; s++) {
+    for (let s = 0; s <= segments; s++) {
       const a = r * (segments + 1) + s;
       const b = (r + 1) * (segments + 1) + s;
       const c = (r + 1) * (segments + 1) + (s + 1);
@@ -1482,7 +1604,9 @@ function buildFish(pos: THREE.Vector3): AnimalData {
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius - 4.5),
-    labelHeight: 1.60,
+    labelHeight: 1.3,
+    colorParts: { body: 0xff6810, stripes: 0xfcfdff, eyes: 0x0a0a0a },
+    colorMaterials: { body: [fishM, finM], stripes: [stripeM], eyes: [eyePupilM] },
   };
 }
 
@@ -1617,19 +1741,28 @@ function buildRabbit(pos: THREE.Vector3): AnimalData {
   });
 
   const habitat = HABITATS[3];
+  group.scale.setScalar(1.3);
   return {
     id: 'rabbit', name: 'Rabbit', habitat: 'Aviary', position: pos,
     color: 0xe0d8d0, accentColor: 0xffb6c1, animationType: 'hop',
     group, parts, phaseOffset: Math.random() * Math.PI * 2,
     patrolPath: [], patrolIndex: 0, patrolT: 0,
     wanderTarget: randomInCircle(habitat.center.x, habitat.center.z, habitat.radius),
-    labelHeight: 1.8,
+    labelHeight: 2.3,
+    colorParts: { body: 0xe8e2dc, nose: 0xf5a5b5, eyes: 0xaa2244 },
+    colorMaterials: { body: [rM, bellyM, innerM], nose: [noseM], eyes: [eyeM] },
   };
 }
 
 // ---------------------------------------------------------------------------
 // Species Metadata & Spawner Factory
 // ---------------------------------------------------------------------------
+export interface SpeciesColorPart {
+  key: string;
+  label: string;
+  defaultColor: string;
+}
+
 export interface SpeciesOption {
   id: string;
   name: string;
@@ -1637,25 +1770,90 @@ export interface SpeciesOption {
   emoji: string;
   defaultColor: string;
   defaultName: string;
+  colorParts: SpeciesColorPart[];
 }
 
 export const ANIMAL_SPECIES: SpeciesOption[] = [
-  { id: 'rabbit',    name: 'Rabbit',    habitat: 'Aviary',       emoji: '🐰', defaultColor: '#e0d8d0', defaultName: 'Barnaby' },
-  { id: 'lion',      name: 'Lion',      habitat: 'Savanna',      emoji: '🦁', defaultColor: '#d49b42', defaultName: 'Leo' },
-  { id: 'elephant',  name: 'Elephant',  habitat: 'Savanna',      emoji: '🐘', defaultColor: '#8c8f94', defaultName: 'Peanut' },
-  { id: 'zebra',     name: 'Zebra',     habitat: 'Savanna',      emoji: '🦓', defaultColor: '#3a3a3a', defaultName: 'Marty' },
-  { id: 'giraffe',   name: 'Giraffe',   habitat: 'Savanna',      emoji: '🦒', defaultColor: '#dca654', defaultName: 'Geoffrey' },
-  { id: 'fish',      name: 'Clownfish', habitat: 'Aquatic Zone', emoji: '🐠', defaultColor: '#ff6810', defaultName: 'Nemo' },
-  { id: 'turtle',    name: 'Turtle',    habitat: 'Reptile Zone', emoji: '🐢', defaultColor: '#5a6b32', defaultName: 'Shelly' },
-  { id: 'snake',     name: 'Snake',     habitat: 'Reptile Zone', emoji: '🐍', defaultColor: '#2d7c2d', defaultName: 'Sly' },
-  { id: 'bird',      name: 'Bird',      habitat: 'Aviary',       emoji: '🦜', defaultColor: '#2898ec', defaultName: 'Pip' },
-  { id: 'monkey',    name: 'Monkey',    habitat: 'Jungle',       emoji: '🐵', defaultColor: '#60421d', defaultName: 'Milo' },
+  { id: 'rabbit',    name: 'Rabbit',    habitat: 'Aviary',       emoji: '🐰', defaultColor: '#e0d8d0', defaultName: 'Barnaby',
+    colorParts: [
+      { key: 'body', label: 'Body', defaultColor: '#e0d8d0' },
+      { key: 'nose', label: 'Nose', defaultColor: '#f5a5b5' },
+      { key: 'eyes', label: 'Eyes', defaultColor: '#aa2244' },
+    ],
+  },
+  { id: 'elephant',  name: 'Elephant',  habitat: 'Savanna',      emoji: '🐘', defaultColor: '#8c8f94', defaultName: 'Peanut',
+    colorParts: [{ key: 'body', label: 'Body', defaultColor: '#8c8f94' }],
+  },
+  { id: 'zebra',     name: 'Zebra',     habitat: 'Savanna',      emoji: '🦓', defaultColor: '#ffffff', defaultName: 'Marty',
+    colorParts: [
+      { key: 'body', label: 'Body', defaultColor: '#ffffff' },
+      { key: 'stripes', label: 'Stripes', defaultColor: '#1a1a1a' },
+      { key: 'mane', label: 'Mane', defaultColor: '#1a1a1a' },
+      { key: 'muzzle', label: 'Muzzle', defaultColor: '#333333' },
+      { key: 'eyes', label: 'Eyes', defaultColor: '#0a0a0a' },
+    ],
+  },
+  { id: 'fish',      name: 'Clownfish', habitat: 'Aquatic Zone', emoji: '🐠', defaultColor: '#ff6810', defaultName: 'Nemo',
+    colorParts: [
+      { key: 'body',    label: 'Body',    defaultColor: '#ff6810' },
+      { key: 'stripes', label: 'Stripes', defaultColor: '#fcfdff' },
+      { key: 'eyes',    label: 'Eyes',    defaultColor: '#0a0a0a' },
+    ],
+  },
+  { id: 'turtle',    name: 'Turtle',    habitat: 'Reptile Zone', emoji: '🐢', defaultColor: '#5a6b32', defaultName: 'Shelly',
+    colorParts: [
+      { key: 'shell', label: 'Shell', defaultColor: '#5a6b32' },
+      { key: 'limbs', label: 'Limbs', defaultColor: '#8ea65d' },
+      { key: 'eyes',  label: 'Eyes',  defaultColor: '#0e0e0e' },
+    ],
+  },
+  { id: 'snake',     name: 'Snake',     habitat: 'Reptile Zone', emoji: '🐍', defaultColor: '#2d7c2d', defaultName: 'Sly',
+    colorParts: [
+      { key: 'body',    label: 'Body',    defaultColor: '#2d7c2d' },
+      { key: 'pattern', label: 'Pattern', defaultColor: '#164416' },
+      { key: 'eyes',    label: 'Eyes',    defaultColor: '#ddcc00' },
+      { key: 'tongue',  label: 'Tongue',  defaultColor: '#dd1818' },
+    ],
+  },
+  { id: 'bird',      name: 'Bird',      habitat: 'Aviary',       emoji: '🦜', defaultColor: '#eb4818', defaultName: 'Pip',
+    colorParts: [
+      { key: 'body',    label: 'Body',    defaultColor: '#eb4818' },
+      { key: 'wings',   label: 'Wings',   defaultColor: '#ff7020' },
+      { key: 'pattern', label: 'Breast',  defaultColor: '#ffcc00' },
+      { key: 'eyes',    label: 'Eyes',    defaultColor: '#0a0a0a' },
+    ],
+  },
+  { id: 'monkey',    name: 'Monkey',    habitat: 'Jungle',       emoji: '🐵', defaultColor: '#60421d', defaultName: 'Milo',
+    colorParts: [
+      { key: 'body', label: 'Body', defaultColor: '#60421d' },
+      { key: 'face', label: 'Face', defaultColor: '#eecbb0' },
+      { key: 'tail', label: 'Tail', defaultColor: '#60421d' },
+    ],
+  },
+  { id: 'shark', name: 'Shark', habitat: 'Aquatic Zone', emoji: '🦈', defaultColor: '#ffffff', defaultName: 'Bruce',
+    colorParts: [
+      { key: 'body', label: 'Body', defaultColor: '#ffffff' },
+      { key: 'belly', label: 'Belly', defaultColor: '#ffffff' },
+      { key: 'fins', label: 'Fins', defaultColor: '#ffffff' },
+      { key: 'eyes', label: 'Eyes', defaultColor: '#ffffff' },
+    ],
+  },
+  { id: 'wolf', name: 'Baby Wolf', habitat: 'Jungle', emoji: '🐺', defaultColor: '#ffffff', defaultName: 'Ghost',
+    colorParts: [
+      { key: 'body', label: 'Body', defaultColor: '#ffffff' },
+      { key: 'belly', label: 'Belly', defaultColor: '#ffffff' },
+      { key: 'tail', label: 'Tail', defaultColor: '#ffffff' },
+      { key: 'snout', label: 'Snout', defaultColor: '#ffffff' },
+      { key: 'eyes', label: 'Eyes', defaultColor: '#ffffff' },
+    ],
+  },
 ];
 
 export function spawnAnimal(
   speciesId: string,
   customName?: string,
   customColor?: string,
+  customColors?: Record<string, string>,
 ): AnimalData {
   const species = ANIMAL_SPECIES.find(
     s => s.id === speciesId || s.name.toLowerCase() === speciesId.toLowerCase(),
@@ -1673,13 +1871,14 @@ export function spawnAnimal(
 
   let animal: AnimalData;
   switch (species.id) {
-    case 'lion':      animal = buildLion(pos);     break;
     case 'elephant':  animal = buildElephant(pos); break;
     case 'giraffe':   animal = buildGiraffe(pos);  break;
     case 'zebra':     animal = buildZebra(pos);    break;
     case 'monkey':    animal = buildMonkey(pos);   break;
-    case 'snake':     animal = buildSnake(pos);    break;
-    case 'bird':      animal = buildBird(pos);     break;
+    case 'snake':     animal = buildSnake(pos); break;
+    case 'bird':      animal = buildBird(pos); break;
+    case 'shark':     animal = buildShark(pos); break;
+    case 'wolf':      animal = buildWolf(pos); break;
     case 'turtle':    animal = buildTurtle(pos);   break;
     case 'fish':      animal = buildFish(pos);     break;
     case 'rabbit':
@@ -1690,28 +1889,53 @@ export function spawnAnimal(
     animal.name = customName.trim();
   }
 
-  if (customColor) {
+  // Apply multi-part colors if provided
+  if (customColors) {
+    if (!animal.colorParts) animal.colorParts = {};
+    for (const [partKey, hexStr] of Object.entries(customColors)) {
+      const tint = new THREE.Color(hexStr);
+      
+      // Store immediately so async GLB loaders will pick it up when they finish loading
+      animal.colorParts[partKey] = tint.getHex();
+      
+      // If materials are already loaded (e.g. synchronous procedural animals), tint them now
+      if (animal.colorMaterials && animal.colorMaterials[partKey]) {
+        animal.colorMaterials[partKey].forEach(m => {
+          m.color.set(tint);
+          if ('map' in m) (m as any).map = null;
+          if ('vertexColors' in m) (m as any).vertexColors = false;
+          m.needsUpdate = true;
+        });
+      }
+    }
+  }
+  // Fallback: single-color tinting (backwards compatibility)
+  else if (customColor) {
     const tint = new THREE.Color(customColor);
     animal.color = tint.getHex();
-    animal.group.traverse(child => {
-      if (child instanceof THREE.Mesh && child.material) {
-        if (Array.isArray(child.material)) {
-          child.material = child.material.map(m => {
-            const cloned = m.clone();
+    if (animal.colorMaterials?.body) {
+      animal.colorMaterials.body.forEach(m => m.color.set(tint));
+    } else {
+      animal.group.traverse(child => {
+        if (child instanceof THREE.Mesh && child.material) {
+          if (Array.isArray(child.material)) {
+            child.material = child.material.map(m => {
+              const cloned = m.clone();
+              if ('color' in cloned && cloned.color instanceof THREE.Color) {
+                cloned.color.set(tint);
+              }
+              return cloned;
+            });
+          } else {
+            const cloned = child.material.clone();
             if ('color' in cloned && cloned.color instanceof THREE.Color) {
               cloned.color.set(tint);
             }
-            return cloned;
-          });
-        } else {
-          const cloned = child.material.clone();
-          if ('color' in cloned && cloned.color instanceof THREE.Color) {
-            cloned.color.set(tint);
+            child.material = cloned;
           }
-          child.material = cloned;
         }
-      }
-    });
+      });
+    }
   }
 
   animal.group.position.copy(animal.position);
@@ -1722,22 +1946,31 @@ export function spawnAnimal(
 // Public
 // ---------------------------------------------------------------------------
 export function buildAnimals(scene: THREE.Scene): AnimalData[] {
-  const animals: AnimalData[] = [
-    buildLion(     new THREE.Vector3(-36, 0, -36)),
-    buildElephant( new THREE.Vector3(-22, 0, -24)),
-    buildGiraffe(  new THREE.Vector3(-32, 0, -20)),
-    buildZebra(    new THREE.Vector3(-26, 0, -32)),
-    buildMonkey(   new THREE.Vector3( 23, 0, -33)),
-    buildSnake(    new THREE.Vector3( 32, 0,  24)),
-    buildBird(     new THREE.Vector3(-33, 0,  23)),
-    buildTurtle(   new THREE.Vector3( 24, 0,  31)),
-    buildFish(     new THREE.Vector3(  0, -1.10, 0)),
-    buildRabbit(   new THREE.Vector3(-23, 0,  33)),
+  const allAnimals: AnimalData[] = [
+    buildElephant( new THREE.Vector3(-38, 0, -42)), // Savanna
+    buildZebra(    new THREE.Vector3(-55, 0, -60)), // Savanna
+    buildMonkey(   new THREE.Vector3( 42, 0, -58)), // Jungle
+    buildSnake(    new THREE.Vector3( 58, 0,  42)), // Reptile
+    buildBird(     new THREE.Vector3(-52, 0,  40)), // Aviary
+    buildTurtle(   new THREE.Vector3( 42, 0,  58)), // Reptile
+    buildFish(     new THREE.Vector3(  0, -1.10, 0)), // Aquatic (unchanged)
+    buildRabbit(   new THREE.Vector3(-42, 0,  58)), // Aviary
   ];
 
-  animals.forEach(animal => {
+  const animals: AnimalData[] = [];
+  allAnimals.forEach((animal, index) => {
+    const instanceKey = `default_${animal.id}`;
+    animal.group.userData.instanceId = instanceKey;
+    if (isAnimalReleased(instanceKey)) {
+      return; // Skipped because admin released this animal
+    }
+    const savedName = getSavedAnimalName(instanceKey, index);
+    if (savedName) {
+      animal.name = savedName;
+    }
     animal.group.position.copy(animal.position);
     scene.add(animal.group);
+    animals.push(animal);
   });
 
   return animals;

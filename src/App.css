@@ -210,7 +210,7 @@
 .zoo-canvas:active { cursor: grabbing; }
 
 /* ============================================================
-   Hover tooltip
+   Hover tooltip & HTML Nametags
    ============================================================ */
 .animal-tooltip {
   position: fixed;
@@ -226,6 +226,47 @@
   white-space: nowrap;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
+}
+
+.html-nametag {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: rgba(12, 20, 35, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #e8dfc0;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(210, 175, 80, 0.45);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 15;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transform-origin: center bottom;
+}
+.html-nametag:hover {
+  background: rgba(30, 55, 90, 0.88);
+  border-color: rgba(120, 200, 255, 0.7);
+  color: #d4ecff;
+  box-shadow: 0 2px 12px rgba(80, 160, 255, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.html-nametag .nametag-edit-icon {
+  font-size: 9px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.html-nametag:hover .nametag-edit-icon {
+  opacity: 0.7;
 }
 
 /* ============================================================
@@ -346,80 +387,136 @@
 }
 
 /* ============================================================
-   Habitat legend — compact collapsible
+/* ============================================================
+   Habitat legend — glassmorphism interactive tour selector
    ============================================================ */
 .habitat-legend {
   position: absolute;
   top: 14px; right: 14px;
-  width: 192px;
-  background: linear-gradient(150deg, rgba(8, 20, 38, 0.94), rgba(12, 30, 58, 0.94));
-  border: 1px solid rgba(80, 140, 210, 0.22);
-  border-radius: 14px;
+  width: 215px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 20px rgba(56, 189, 248, 0.1);
+  backdrop-filter: blur(14px) saturate(190%);
+  -webkit-backdrop-filter: blur(14px) saturate(190%);
   z-index: 10;
+  transition: all 0.2s ease;
 }
 
 .legend-toggle {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  padding: 9px 12px;
+  padding: 10px 14px;
   background: none;
   border: none;
   cursor: pointer;
-  color: #a8c8e0;
-  font-size: 0.74rem;
+  color: #bae6fd;
+  font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-family: inherit;
-  transition: background 0.12s;
+  transition: background 0.15s;
 }
-.legend-toggle:hover { background: rgba(255, 255, 255, 0.05); }
-.legend-toggle-icon { font-size: 0.95rem; }
+.legend-toggle:hover { background: rgba(255, 255, 255, 0.06); }
+.legend-toggle-icon { font-size: 1rem; }
 .legend-toggle-label { flex: 1; text-align: left; }
-.legend-chevron { font-size: 0.65rem; opacity: 0.6; }
+.legend-chevron { font-size: 0.68rem; opacity: 0.7; color: #38bdf8; }
 
 .legend-list {
   list-style: none;
-  padding: 0 10px 10px;
+  padding: 0 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 2px;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.legend-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(56, 189, 248, 0.35);
+  transform: translateX(-2px);
+}
+
+.legend-item.active {
+  background: rgba(14, 165, 233, 0.18);
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.25);
 }
 
 .legend-swatch {
-  width: 28px; height: 28px;
-  border-radius: 8px;
+  width: 32px; height: 32px;
+  border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 0.88rem;
+  font-size: 1rem;
   flex-shrink: 0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: transform 0.18s ease;
 }
 
-.legend-text {}
+.legend-item:hover .legend-swatch {
+  transform: scale(1.08);
+}
+
+.legend-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .legend-habitat-name {
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 700;
-  color: #d8d0b8;
+  color: #f1f5f9;
   display: block;
   line-height: 1.2;
 }
+
 .legend-animals {
-  font-size: 0.62rem;
-  color: #6a90a8;
+  font-size: 0.64rem;
+  color: #94a3b8;
   line-height: 1.3;
   margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.legend-fly-icon {
+  font-size: 0.75rem;
+  color: #38bdf8;
+  opacity: 0.45;
+  transition: all 0.18s ease;
+  flex-shrink: 0;
+}
+
+.legend-item:hover .legend-fly-icon {
+  opacity: 1;
+  transform: translateX(2px);
+}
+
+.legend-item.active .legend-fly-icon {
+  opacity: 1;
+  color: #38bdf8;
 }
 
 /* ============================================================
@@ -640,8 +737,22 @@
 }
 
 /* Color palette & picker */
+.color-parts-list {
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 240px; overflow-y: auto;
+  padding-right: 6px;
+}
+.color-part-row {
+  display: flex; flex-direction: column; gap: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px; border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.color-part-label {
+  font-size: 0.78rem; font-weight: 600; color: #b0d0f0;
+}
 .color-palette-container {
-  display: flex; flex-direction: column; gap: 9px;
+  display: flex; align-items: center; justify-content: space-between; gap: 9px; flex-wrap: wrap;
 }
 .color-swatches {
   display: flex; flex-wrap: wrap; gap: 7px;
@@ -1062,5 +1173,717 @@
   .user-email { max-width: 90px; }
   .habitat-legend { top: auto; bottom: 110px; right: 8px; width: 170px; }
   .animal-info-panel { left: 8px; right: 8px; width: auto; bottom: 10px; }
-  .btn-add-animal { padding: 6px 12px; font-size: 0.76rem; }
 }
+
+/* ============================================================
+/* ============================================================
+   Sonic Tour Guide — Premium Glassmorphic UI
+   ============================================================ */
+.sonic-dialogue-overlay {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 410px;
+  max-width: calc(100vw - 32px);
+  z-index: 9999;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(12px) saturate(190%);
+  -webkit-backdrop-filter: blur(12px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  padding: 16px 18px 18px;
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(56, 189, 248, 0.14),
+    inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  color: #f1f5f9;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  animation: sonicPanelIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sonicPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Header */
+.sonic-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  margin-bottom: 12px;
+}
+
+.sonic-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sonic-avatar-wrapper {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+}
+
+.sonic-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0052D4 0%, #4364F7 100%);
+  border: 2px solid rgba(56, 189, 248, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 16px rgba(14, 165, 233, 0.45);
+  overflow: hidden;
+}
+
+.sonic-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sonic-status-indicator {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #10b981;
+  border: 2px solid #0f172a;
+  box-shadow: 0 0 8px #10b981;
+  animation: sonicRadar 2.2s infinite;
+  z-index: 2;
+}
+
+@keyframes sonicRadar {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.sonic-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sonic-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: 0.01em;
+}
+
+.sonic-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.sonic-header-stop-btn {
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  font-size: 0.70rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  margin-left: 6px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
+.sonic-header-stop-btn:hover {
+  background: rgba(239, 68, 68, 0.32);
+  border-color: rgba(239, 68, 68, 0.75);
+  color: #ffffff;
+  transform: scale(1.05);
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.45);
+}
+
+.sonic-header-stop-btn:active {
+  transform: scale(0.96);
+}
+
+.sonic-sub {
+  font-size: 0.73rem;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sonic-speaking-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.sound-wave-bar {
+  display: inline-block;
+  width: 2.5px;
+  height: 10px;
+  background: #38bdf8;
+  border-radius: 2px;
+  animation: soundWave 0.9s ease-in-out infinite alternate;
+}
+.sound-wave-bar:nth-child(2) {
+  animation-delay: 0.25s;
+  height: 14px;
+}
+.sound-wave-bar:nth-child(3) {
+  animation-delay: 0.5s;
+  height: 8px;
+}
+
+@keyframes soundWave {
+  from { transform: scaleY(0.4); }
+  to { transform: scaleY(1.3); }
+}
+
+.sonic-thinking-badge {
+  color: #f59e0b;
+  font-weight: 600;
+  animation: pulse 1.5s infinite;
+}
+
+.sonic-listening-badge {
+  color: #ef4444;
+  font-weight: 600;
+  animation: pulse 1s infinite;
+}
+
+/* Close button and soft custom tooltip */
+.sonic-close-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sonic-close-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #cbd5e1;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.sonic-close-btn:hover {
+  background: rgba(244, 63, 94, 0.16);
+  border-color: rgba(244, 63, 94, 0.38);
+  color: #fda4af;
+  transform: scale(1.08);
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.25);
+}
+
+.sonic-tooltip {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+  font-size: 0.70rem;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 100;
+}
+
+.sonic-close-wrapper:hover .sonic-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Conversation / Content Area */
+.sonic-content-area {
+  max-height: 230px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-right: 4px;
+  scroll-behavior: smooth;
+}
+
+.sonic-content-area::-webkit-scrollbar {
+  width: 4px;
+}
+.sonic-content-area::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.sonic-welcome {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  border-radius: 14px;
+  padding: 13px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sonic-welcome-text {
+  font-size: 0.83rem;
+  color: #cbd5e1;
+  line-height: 1.48;
+  margin: 0;
+}
+.sonic-welcome-text strong {
+  color: #38bdf8;
+}
+
+/* Lightened soft gray/blue subheader text */
+.sonic-chips-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #93c5fd;
+  margin-top: 2px;
+}
+
+/* Increased gap between suggestion buttons */
+.sonic-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Sleek suggestion chip hover state */
+.sonic-chip {
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #bae6fd;
+  border-radius: 20px;
+  padding: 6px 13px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sonic-chip:hover {
+  background: rgba(14, 165, 233, 0.28);
+  border-color: rgba(56, 189, 248, 0.65);
+  color: #ffffff;
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(14, 165, 233, 0.4), 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+/* Chat Messages */
+.sonic-msg-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sonic-user-bubble {
+  background: linear-gradient(135deg, rgba(0, 82, 212, 0.5) 0%, rgba(67, 100, 247, 0.5) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 14px 14px 2px 14px;
+  padding: 8px 12px;
+  color: #f8fafc;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  max-width: 86%;
+  word-break: break-word;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.sonic-msg-guide {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.sonic-guide-bubble {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  border-radius: 14px 14px 14px 2px;
+  padding: 10px 14px;
+  color: #e2e8f0;
+  font-size: 0.83rem;
+  line-height: 1.48;
+  max-width: 95%;
+  word-break: break-word;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.sonic-response-text {
+  white-space: pre-wrap;
+}
+
+.sonic-response-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sonic-action-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 3px 9px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  outline: none;
+}
+
+.sonic-action-btn:hover {
+  background: rgba(14, 165, 233, 0.22);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.sonic-action-btn-stop {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.sonic-action-btn-stop:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fff;
+}
+
+/* Loading State */
+.sonic-loading-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+}
+
+.sonic-loading-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sonic-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  animation: sonicBounce 1.2s infinite ease-in-out;
+}
+.sonic-dot:nth-child(2) { animation-delay: 0.2s; }
+.sonic-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes sonicBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1.15); opacity: 1; }
+}
+
+.sonic-loading-txt {
+  font-size: 0.8rem;
+  color: #38bdf8;
+  font-style: italic;
+}
+
+/* Integrated Input Dock: darker and inset */
+.sonic-form {
+  width: 100%;
+}
+
+.sonic-input-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(8, 14, 28, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  padding: 5px 6px 5px 14px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: all 0.2s ease;
+}
+
+.sonic-input-dock:focus-within {
+  background: rgba(6, 11, 22, 0.88);
+  border-color: rgba(56, 189, 248, 0.55);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.55), 0 0 14px rgba(14, 165, 233, 0.25);
+}
+
+.sonic-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #f8fafc;
+  font-size: 0.88rem;
+  padding: 7px 0;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.sonic-input::placeholder {
+  color: #64748b;
+  font-size: 0.83rem;
+}
+
+.sonic-input.listening {
+  color: #38bdf8;
+}
+
+.sonic-input.listening::placeholder {
+  color: #38bdf8;
+  font-style: italic;
+}
+
+/* Glassmorphic Dictation Microphone Button */
+.sonic-btn-mic {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #94a3b8;
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.sonic-btn-mic:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+  transform: scale(1.06);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+}
+
+.sonic-btn-mic:active {
+  transform: scale(0.96);
+}
+
+/* Pulsating red when actively dictating audio */
+.sonic-btn-mic.listening {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.65);
+  color: #f87171;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.5);
+  animation: sonicMicPulse 1.5s infinite;
+}
+
+@keyframes sonicMicPulse {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Sleek Stop Audio Button in Input Dock */
+.sonic-btn-stop {
+  background: rgba(239, 68, 68, 0.20);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  font-weight: 600;
+  font-size: 0.82rem;
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  box-shadow: 0 2px 10px rgba(239, 68, 68, 0.25);
+  animation: sonicFadeIn 0.2s ease-out;
+}
+
+.sonic-btn-stop:hover {
+  background: rgba(239, 68, 68, 0.35);
+  border-color: rgba(239, 68, 68, 0.8);
+  color: #ffffff;
+  transform: scale(1.05);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.45);
+}
+
+.sonic-btn-stop:active {
+  transform: scale(0.96);
+}
+
+.sonic-stop-icon {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+/* Vibrant Sonic Blue 'Ask' button */
+.sonic-btn-send {
+  background: linear-gradient(135deg, #0052D4 0%, #4364F7 100%);
+  border: none;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 0.84rem;
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  outline: none;
+  box-shadow: 0 4px 14px rgba(0, 82, 212, 0.4), 0 0 8px rgba(67, 100, 247, 0.3);
+}
+
+.sonic-btn-send:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0060f0 0%, #5375ff 100%);
+  transform: scale(1.04) translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 82, 212, 0.55), 0 0 14px rgba(67, 100, 247, 0.45);
+}
+
+.sonic-btn-send:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Red Cancel button for pending API requests */
+.sonic-btn-cancel {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  border: none;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 0.84rem;
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  outline: none;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4), 0 0 8px rgba(239, 68, 68, 0.3);
+}
+
+.sonic-btn-cancel:hover {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  transform: scale(1.04) translateY(-1px);
+  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.55), 0 0 14px rgba(239, 68, 68, 0.45);
+}
+
+.sonic-btn-cancel:active {
+  transform: scale(0.98);
+}
+
+.sonic-btn-send:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.sonic-send-arrow {
+  font-size: 0.72rem;
+  transition: transform 0.15s ease;
+}
+.sonic-btn-send:hover:not(:disabled) .sonic-send-arrow {
+  transform: translateX(2px);
+}
+
+/* 3D Overhead Floating Speech Bubble */
+.sonic-chat-bubble {
+  position: fixed;
+  z-index: 999;
+  transform: translate(-50%, -100%);
+  width: 290px;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.55),
+    0 0 20px rgba(14, 165, 233, 0.25);
+  border-radius: 16px;
+  padding: 12px 15px;
+  pointer-events: none;
+  transition: opacity 0.22s;
+  color: #f1f5f9;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+
+.sonic-chat-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -9px;
+  left: 28px;
+  border-width: 9px 8px 0;
+  border-style: solid;
+  border-color: rgba(15, 23, 42, 0.75) transparent transparent transparent;
+}
+
+@media (max-width: 600px) {
+  .sonic-dialogue-overlay {
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+    border-radius: 16px;
+    padding: 14px;
+  }
+}
+
